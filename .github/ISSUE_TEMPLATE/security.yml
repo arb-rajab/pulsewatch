@@ -1,0 +1,12 @@
+name: Security concern (non-sensitive only)
+description: For non-sensitive security questions. Use private reporting (see SECURITY.md) for actual vulnerabilities.
+labels: ["type/security"]
+body:
+  - type: markdown
+    attributes:
+      value: "⚠️ Do NOT report actual vulnerabilities here. Use GitHub's private vulnerability reporting per SECURITY.md."
+  - type: textarea
+    attributes:
+      label: Question or concern
+    validations:
+      required: true

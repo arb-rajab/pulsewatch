@@ -1,0 +1,42 @@
+# Environment
+.env
+.env.*
+!.env.example
+
+# Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+coverage.out
+coverage.html
+/backend/bin/
+/backend/tmp/
+/backend/pulsewatch
+
+# Node / SvelteKit
+node_modules/
+frontend/.svelte-kit/
+frontend/build/
+frontend/.vercel/
+frontend/coverage/
+frontend/vite.config.ts.timestamp-*
+
+# Docker
+docker-compose.override.yml
+
+# IDE / local tooling
+.claude/
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini

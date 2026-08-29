@@ -1,0 +1,15 @@
+name: Feature request
+description: Suggest an addition
+labels: ["type/feature"]
+body:
+  - type: textarea
+    attributes:
+      label: Problem this solves
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Proposed approach
+  - type: markdown
+    attributes:
+      value: "Note: check docs/project-memory/01-scope-and-non-goals.md first — explicit non-goals will be declined."
