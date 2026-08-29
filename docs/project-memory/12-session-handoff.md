@@ -7,55 +7,71 @@
 - Current version or branch: `main` (unreleased, pre-v0.1.0)
 
 ## Session completed
-- Session number and title: **Session 2 — Requirements Analysis**
-- Objective: Turn the MVP boundary and continuous-operation properties named in Session 1 into concrete, testable functional and non-functional requirements (`02-requirements.md`).
+- Session number and title: **Session 3 — Architecture & Design**
+- Objective: Design the concrete architecture — scheduler restart-safety,
+  alert-suppression, agent reachability, and Go concurrency model — that
+  satisfies every FR/NFR in `02-requirements.md`, as real ADRs with
+  options-considered reasoning, not defaulted implementations.
 - Status: **complete**
 
 ## Work completed
-- Filled in the existing `02-requirements.md` template in full: roles/permissions matrix, 10 user stories with Given/When/Then acceptance criteria, 23 functional requirements, 12 non-functional requirements with numeric targets, data classification, integration requirements, and constraints.
-- Wrote 10 user stories (US-001–US-010) covering every core continuous-operation flow named for this session: registering an HTTP(S) check (US-001) and a TCP check (US-002) — the two check types this repo's MVP boundary actually commits to per `01-scope-and-non-goals.md` (ICMP/DNS/cert-expiry are backlog, not MVP); a check running on schedule and recording a result (US-003); rolling-window SLO evaluation including the pulsewatch-downtime "unknown" exclusion (US-004); alert firing on a real threshold breach (US-005) and NOT firing on a sub-threshold blip (US-006); both restart-safety properties from Session 1 as explicit, testable stories rather than design notes — no lost in-flight scheduling state (US-007) and no double-alerting (US-008); dashboard viewing (US-009); and private-target monitoring via the agent (US-010).
-- Wrote functional requirements (FR-001–FR-023) with one row per MVP boundary checklist item from `01-scope-and-non-goals.md`, each mapped to the user story or success metric that verifies it — confirmed every MVP boundary checklist item and every continuous-operation property from Session 1 has at least one corresponding FR, per this session's definition of done.
-- Wrote non-functional requirements (NFR-001–NFR-012) with real numeric targets specific to continuous operation, not generic request-latency numbers: check-interval accuracy (±2s jitter bound), alert latency budget (≤5s from threshold breach to dispatch attempt), restart-recovery time (≤10s for ≤100 targets), restart correctness (0 duplicate alerts), rollup-job timing and retention correctness, concurrency safety (0 overlapping checks under a slow-target test), agent staleness threshold, and dashboard read performance (reads rollups, not raw history). Also proposed the three numeric defaults Session 1 explicitly deferred to this session — default check interval (30s), default consecutive-failure threshold (3), default rollup retention (400 days) — each with stated reasoning tied to the brief's measured-scale assumptions, flagged as adjustable in Architecture (Session 3), not re-litigating Session 1.
-- Wrote a roles/permissions baseline sized to this repo's actual v1 scope: a single human **Operator** role (no ABAC, no privacy-forge-style multi-role matrix) plus a machine **Agent** role (its own service credential, scoped to reporting only its assigned targets) — explicitly noted that no viewer/status-page role exists at v1, since both public status pages and multi-user role separation are non-goals/backlog items per `01-scope-and-non-goals.md`, not omissions.
-- Wrote data classification covering the four categories this repo actually has sensitive data in: target host/URL/port configs (Confidential — reveals private infrastructure topology), alert-channel credentials (Secret — webhook URLs/email-SMS provider credentials, must be encrypted at rest and write-only after creation, formalized as FR-023), check results (confirmed low-sensitivity, with one flagged caveat for Session 3 about body-match fragment capture potentially leaking monitored-target response content), and agent/operator authentication credentials (Secret). Marked "Lawful basis" `N/A` explicitly on every row rather than leaving it blank or inventing GDPR relevance this repo doesn't have — pulsewatch processes no personal data about third parties.
-- Made the private-target-reachability requirement concrete rather than leaving it as Discovery-phase justification: FR-017/018/019 and US-010 require the agent to execute checks from a location that has real network reachability, require agent→server communication to be agent-initiated/outbound-only (so monitoring a private target never requires opening an inbound port), and require the server to distinguish "agent unreachable" from "target down" (mirroring the pulsewatch-restart "unknown" SLO carve-out) via NFR-008. Deliberately left *how* an agent learns its assigned target list (push vs. poll vs. static config) open for Architecture — Requirements states the property the mechanism must satisfy, not the mechanism itself.
-- Updated `docs/SDLC-EVIDENCE.md`'s Phase 2 (Requirements Analysis) row with real evidence links, keeping the depth marker `light` per this repo's own ledger declaration.
+- Wrote four ADRs (`docs/adr/`), each with real options considered and trade-offs stated, matching this portfolio's established ADR rigor (calibrated against `lexicon/docs/adr/ADR-0001` and `privacy-forge/docs/adr/ADR-0006`) despite this repo's baseline (not deep) Architecture phase:
+  - **ADR-0001** — restart-safe, duplicate-proof scheduling via an atomic Postgres row-leasing claim (`target_schedule.lease_owner`/`lease_expires_at`), rejecting in-memory-only tracking, a Redis lock, and `pg_advisory_lock`. The key insight: there is no separate "restart recovery" code path — a fresh process's first tick runs the identical due-set query and claim statement as every other tick, because an abandoned lease with a past expiry is indistinguishable from an ordinary expired lease regardless of which process wrote it.
+  - **ADR-0002** — an explicit 3-state alert-suppression machine (Healthy → Suspect → Alerting) with a precise transition function, where "exactly one opened alert" and "exactly one resolution notification" are enforced by an atomically-conditional database write (backed by a partial unique index, `incidents (target_id) WHERE closed_at IS NULL`) rather than by caller discipline. `Unknown` (agent stale, or pulsewatch itself was down) is modeled as the transition function simply not being invoked for that period — streak/state pass through unchanged — not a fourth state with its own transitions.
+  - **ADR-0003** — agent-initiated outbound push only (never server-pull, never a manually-distributed static config file): check results + heartbeat via OTLP through the OTel Collector, assignment-list discovery via an authenticated REST poll from the agent. Resolves Session 2's open question (how an agent learns its assignments) and makes the agent-staleness-vs-target-down distinction concrete: agent freshness is evaluated *before* a target's own alert state machine, so a stale agent suppresses evaluation entirely (`Unknown`) rather than ever being fed into it as a `Failure`.
+  - **ADR-0004** — a long-lived, fixed-size worker pool (default 20 workers, 1s scheduler tick — the tick interval is derived directly from NFR-001's ±2s jitter budget, not chosen first), fed by a blocking job channel for natural backpressure, with per-check `context.WithTimeout` and a bounded hard-shutdown deadline. Explicitly ties back to ADR-0001: force-canceling an in-flight check at the shutdown deadline is only safe because Postgres leasing (not in-memory tracking) makes an abandoned check self-healing, not lost.
+- Wrote `03-architecture.md`: C4 system-context and container diagrams; three sequence diagrams (normal check execution — including the agent-executed variant converging on the same code path; restart recovery — showing there's no bespoke recovery routine; alert-fire-vs-suppress — showing every branch of ADR-0002's transition function); component responsibilities table; failure-handling/degradation modes for each component; backup/recovery scope (deferred concretely to `08-deployment-and-operations.md`, not invented here); and a concretely-scoped OpenTelemetry self-observability section (server-internal scheduler/alerting instrumentation via the same collector already required for agent telemetry, exported to a debug/logging exporter — explicitly not a Grafana/Prometheus visualization backend, which would reintroduce the excluded third technology).
+- Wrote `04-data-model.md` with the concrete plain-Postgres rollup/retention design Session 1's TimescaleDB rejection defers to this session: `check_results` as a declaratively range-partitioned table (partitioned by day), retention enforced by **dropping** whole partitions (O(1), no per-row `DELETE`/bloat) rather than row deletion, gated so retention never races ahead of rollup; a single `check_rollups_hourly` tier retained the full 400 days (NFR-012) — deliberately not split into a second daily tier, since ~9,600 rows/target at that retention is trivially fast to scan directly at this project's scale; `unknown_count` computed as `expected_checks - success_count - failure_count` per hourly bucket, which is the concrete mechanism behind FR-011/FR-019's "excluded from both numerator and denominator" carve-out. Also resolved Session 2's second open question: response-body-match fragments are capped at 512 bytes, with a truncation flag.
+- Wrote `09-decision-log.md` as the short-form ADR index (matching the `privacy-forge` pattern — full reasoning stays in `docs/adr/`, this is "read first, then open the linked ADR").
+- Updated `docs/SDLC-EVIDENCE.md`'s Phase 3 row with evidence links, keeping the depth marker `baseline` per this repo's own ledger.
 
 ## Files created or changed
-- `docs/project-memory/02-requirements.md` — filled in from template to a complete, testable requirements document.
-- `docs/SDLC-EVIDENCE.md` — Phase 2 row populated with evidence links.
+- `docs/adr/ADR-0001-scheduler-restart-safety-leasing.md` — new.
+- `docs/adr/ADR-0002-alert-suppression-state-machine.md` — new.
+- `docs/adr/ADR-0003-agent-push-reachability-model.md` — new.
+- `docs/adr/ADR-0004-go-concurrency-worker-pool.md` — new.
+- `docs/project-memory/03-architecture.md` — filled in from template.
+- `docs/project-memory/04-data-model.md` — filled in from template.
+- `docs/project-memory/09-decision-log.md` — filled in from template (index of the four ADRs above).
+- `docs/SDLC-EVIDENCE.md` — Phase 3 row populated with evidence links.
 - `docs/project-memory/12-session-handoff.md` — this file.
 
 ## Decisions made
-- **Proposed numeric defaults for check interval (30s), consecutive-failure threshold (3), and rollup retention (400 days)** — see `02-requirements.md` NFR-010/011/012. These are Session 2's answer to the open question Session 1 explicitly deferred ("exact check-interval and consecutive-failure-threshold defaults are not fixed yet"). Reasoning: 30s matches the brief's stated measured-scale assumption (30–60s interval); a threshold of 3 absorbs a single dropped check (US-006) while still bounding real-outage detection to (3 × interval) + the alert-latency budget (SM1); 400 days of rollup retention keeps a year-over-year comparison alive even if a month is skipped. Flagged as adjustable in Architecture (Session 3) against real implementation constraints, not frozen dogma — but Session 3 should treat "no numeric target existed" as resolved, not reopen the question from scratch.
-- **No viewer/status-page role at v1** — confirmed against `01-scope-and-non-goals.md` rather than invented: public status pages are an explicit non-goal, and multi-user role separation is explicitly backlog, so the roles matrix is deliberately just Operator + machine Agent, not a placeholder for a future ABAC system.
-- **Alert-channel credentials must be encrypted at rest and write-only after creation** (FR-023) — a new requirement this session's data-classification pass surfaced (webhook URLs commonly embed bearer-equivalent tokens, e.g. Slack incoming webhooks), not present in Session 1's scope documents. This is a small, necessary security requirement for MVP, not scope creep — flagged here so Session 3/Architecture and the eventual security threat model (`06-security-threat-model.md`) treat it as already-decided rather than re-deriving it.
+- **Postgres row leasing (not Redis, not advisory locks, not in-memory) is the restart-safety/run-exclusivity mechanism** — ADR-0001. Chosen specifically because it keeps the "is this due" fact and the "is this claimed" guard in the same transactional system, closing a cross-system race class that a Redis-based lock would reopen.
+- **Alert suppression is a database-enforced state machine, not an inline counter check** — ADR-0002. The exactly-once guarantee for incident open/close is backed by both a conditional write and a partial unique index — a defense-in-depth pattern, not single-layer trust in application code.
+- **Agent communication is push-only in both directions that matter (results via OTLP, assignments via agent-initiated REST poll)** — ADR-0003. Rejected using the OTel/OTLP channel itself as a bidirectional control channel for assignment push (Option C) — OTLP's receiver/exporter model isn't shaped for that, and it would blur the OTel learning objective's actual scope.
+- **Worker pool sizing and tick interval are derived from the NFRs, not picked by convention** — ADR-0004: the 1s tick comes directly from NFR-001's ±2s jitter budget; the 20-worker default comes directly from NFR-003's ≤100-target restart-recovery ceiling (a full burst drains in ~5 bounded batches).
+- **Rollup/retention stays a single-tier hourly design on native Postgres partitioning** — `04-data-model.md`. No second daily rollup tier, no TimescaleDB (frozen, not reopened) — sized to this project's actual ~10-target scale, with an explicit revisit-on-evidence trigger if that assumption turns out wrong.
+- **Response-body-match fragment cap: 512 bytes, with a truncation flag** — resolves the Session 2 data-classification caveat concretely.
+- **`05-api-contracts.md` was not written this session** — this session's explicit definition of done (four ADRs, `03-architecture.md`, `04-data-model.md`, evidence/handoff updates) did not require it, and writing it well requires the agent-assignment endpoint and ingestion-endpoint shapes ADR-0003 names but doesn't fully specify at the wire-format level. Flagged as the natural next piece of work, not silently dropped — see Next recommended session.
 
 ## Validation performed
-- Cross-checked every FR against `01-scope-and-non-goals.md`'s MVP boundary checklist — confirmed every checklist bullet has at least one corresponding FR, and no FR introduces a check type, feature, or scope item absent from that checklist (no ICMP/DNS/cert-expiry check, no multi-region probing, no paging-escalation product, no public status page).
-- Cross-checked every user story's restart-safety and rolling-window-SLO acceptance criteria directly against `00-project-brief.md` §3's four continuous-operation properties and the corresponding success metrics — confirmed US-003/US-007 cover property 1 (restart mid-cycle) and SM3, US-003/NFR-007 cover property 2 (no overlapping runs) and SM5, US-004/FR-008-011 cover property 3 (retention/rollup) and SM4, and US-004/US-005/US-006/US-008 cover property 4 (rolling-window SLO correctness, hysteresis, restart-safe de-duplication) and SM1/SM2/SM3.
-- Re-read the finished `02-requirements.md` end to end to confirm no requirement is stated only as a design note (every restart-safety and rolling-window property is a Given/When/Then acceptance criterion or a numbered FR/NFR, not prose), and that the roles/data-classification sections don't import privacy-forge's ABAC/GDPR-specific complexity into a repo that doesn't need it.
-- Confirmed no implementation code, dependency, or config file was touched this session — Requirements Analysis only, per the ground rules; `privacy-forge`, `laravel-consent-guard`, `bookslot`, and `lexicon` were not modified (read-only reference to `privacy-forge`'s `02-requirements.md` for structural calibration only — to see what ceremony to *not* replicate, not to copy its content).
+- Cross-checked every one of the four required decisions against the specific FR/NFR/US IDs it has to satisfy (cited inline in each ADR's Context section) — confirmed NFR-001/003/004/007 and US-003/007/008 are addressed by ADR-0001; FR-004/013-016 and US-005/006/008 by ADR-0002; FR-017/018/019 and US-010/NFR-008 by ADR-0003; NFR-001/003/007 and US-007 by ADR-0004.
+- Confirmed the two Session 2 open questions (agent target-assignment mechanism; response-body-match fragment cap) are both resolved with stated reasoning, not left open again — ADR-0003 for the first, `04-data-model.md`'s entity description for the second.
+- Confirmed the TimescaleDB-vs-Postgres decision was not reopened — `04-data-model.md`'s rollup/retention section is framed explicitly as "the concrete consequence of" Session 1's decision, and reasons from real Postgres-native features (declarative partitioning, partial unique indexes), not from re-litigating whether TimescaleDB should be used instead.
+- Confirmed no requirement from `02-requirements.md` was silently dropped or expanded: re-read all 23 FRs and 12 NFRs against the four ADRs and `03-architecture.md`/`04-data-model.md` — every FR/NFR that names a mechanism (not just a number) now has a concrete architectural answer; NFR-009 (dashboard read performance) and NFR-005/006 (rollup/retention timing) are addressed by the single-tier hourly rollup design's stated scan cost, not left as an unaddressed target.
+- Confirmed the four ADRs are internally consistent with each other where they interlock: ADR-0002 and ADR-0004 both read/write `target_schedule` in the same transaction as ADR-0001's lease release (checked across all three documents, not just asserted in one); ADR-0004's shutdown-safety argument explicitly cites ADR-0001 rather than restating leasing's rationale independently.
+- Confirmed no implementation code, dependency, or `docker-compose.yml` change was made this session — Architecture & Design only, per the ground rules. The OTel Collector's eventual addition to `docker-compose.yml` is named as required future work (ADR-0003 Consequences) rather than done now. `privacy-forge`, `laravel-consent-guard`, `bookslot`, and `lexicon` were not modified — read-only reference to `lexicon/docs/adr/ADR-0001` and `privacy-forge/docs/adr/ADR-0006` for ADR-rigor calibration only.
 
 ## Open questions and risks
-- **Open question (for Architecture, Session 3):** the exact mechanism by which an agent learns its assigned target list (server push, agent poll, or static config file) is deliberately left open in `02-requirements.md`'s integration requirements section — Requirements states the property (agent-initiated, outbound-only reporting) the mechanism must satisfy, not the mechanism itself.
-- **Open question (for Architecture, Session 3):** the exact cap on a response-body-match fragment's stored length (data classification caveat on check results) — flagged, not sized, this session.
-- **Risk (carried forward from Session 1, unchanged):** Go concurrency patterns and OTel collector pipelines are both genuinely new; timebox a learning spike before Session 3 architecture work if either proves a bigger lift than expected.
-- **Risk (narrowed by this session, not yet resolved):** this session committed to real numeric NFR targets (±2s scheduling jitter, ≤5s alert latency, ≤10s restart recovery) that Architecture must actually design the scheduler and alerting pipeline to meet — naming them precisely here makes them checkable in Verification & Testing later, but doesn't yet prove they're achievable with the chosen concurrency design.
-- **No blockers.** Session 3 (Architecture & Design) can start immediately.
+- **Resolved this session (were open after Session 2):** agent target-assignment mechanism (ADR-0003: authenticated REST poll) and the response-body-match fragment cap (`04-data-model.md`: 512 bytes).
+- **New, explicitly flagged item for Session 4 (Implementation):** `05-api-contracts.md` does not exist yet — the agent-assignment REST endpoint's request/response shape and the server's OTLP-forwarded-telemetry ingestion endpoint both need a concrete contract before Implementation can start building either. Not a blocker for Session 3's own definition of done, but should be the first thing addressed before or at the start of Session 4.
+- **New, named but not resolved (deliberately, per this session's ground rules):** exact worker-pool size (20), tick interval (1s), and hard-shutdown-deadline (~30s) defaults in ADR-0004 are reasoned from the stated NFRs but are unmeasured against a real implementation — flagged in the ADR's own Revisit triggers as expected tuning once real dogfooding data exists, not a design gap.
+- **Carried forward from Session 2, still open:** Go concurrency patterns and OTel collector pipelines are both genuinely new implementation work — ADR-0004 and ADR-0003 give them a concrete design now, but neither has been built or measured yet; Session 4 is where the ±2s jitter, ≤10s restart recovery, and 0-duplicate-alert targets actually get tested against real code for the first time.
+- **No blockers.** Session 4 (Implementation) can start once `05-api-contracts.md` is written (either as the first piece of Session 4, or as a short intermediate session).
 
 ## Next recommended session
-- Proposed session title: **Session 3 — Architecture & Design**
-- Single objective: Design the system architecture (scheduler, worker-pool concurrency model, agent↔server protocol over the OTel pipeline, data model, API contracts) that satisfies every FR/NFR in `02-requirements.md` — this is a baseline-depth phase per this repo's ledger, but the first session where formal ADRs begin (per `00a-ledger-confirmation.md`), starting with formalizing the plain-Postgres-vs-TimescaleDB decision from Session 1 as ADR-0001 if desired.
-- Inputs required: this handoff; `00-project-brief.md`; `00b-build-vs-alternatives.md`; `01-scope-and-non-goals.md`; `02-requirements.md`.
-- Expected deliverables: `03-architecture.md`, `04-data-model.md`, `05-api-contracts.md`, and any ADRs the session produces.
-- Definition of done: every FR/NFR in `02-requirements.md` is addressed by a concrete architectural decision (not left implicit); the two open questions above (agent target-assignment mechanism, body-match fragment cap) are resolved or explicitly deferred with reasoning; no requirement is silently dropped or expanded.
+- Proposed session title: **Session 4 — Implementation (Part 1: scheduler, leasing, alert state machine)** — optionally preceded by a short API-contracts pass to produce `05-api-contracts.md` first, since ADR-0003 names concrete endpoints it doesn't fully specify at the wire-format level.
+- Single objective: Build the Go scheduler/worker pool (ADR-0004), the Postgres leasing claim/release (ADR-0001), and the alert-suppression state machine (ADR-0002) as real, tested code — this is the core continuous-operation machinery every other requirement depends on, and the four ADRs from this session are its exact specification.
+- Inputs required: this handoff; `02-requirements.md`; `docs/adr/ADR-0001` through `ADR-0004`; `03-architecture.md`; `04-data-model.md`.
+- Expected deliverables: `05-api-contracts.md` (if not done as a preceding short session); the `target_schedule`/`check_results`/`check_rollups_hourly`/`incidents` schema as real migrations; the scheduler, worker pool, leasing claim, and alert state machine as real Go code with tests exercising NFR-001 (jitter), NFR-003 (restart recovery), NFR-004 (0 duplicate alerts), and NFR-007 (0 overlapping checks) directly — not just implemented, verified, matching this repo's own "not just non-crashing" standard from `00-project-brief.md`'s success metrics.
+- Definition of done: every mechanism named in ADR-0001/0002/0004 exists as real, tested code; the four ADRs' Consequences sections (e.g. "ADR-0004 must implement the claim as the first thing a worker does") are checked against the actual implementation, not left as unread prose.
 
 ## Paste-into-new-session context
 
 **Project:** pulsewatch — self-hosted uptime, SLO, and alerting service with a lightweight agent
 **Track:** public flagship
-**Repository state:** branch `main`, unreleased (pre-v0.1.0), Sessions 1–2 complete
+**Repository state:** branch `main`, unreleased (pre-v0.1.0), Sessions 1–3 complete
 
 **Problem being solved:** This developer maintains several self-hosted flagship repositories (`privacy-forge`, `laravel-consent-guard`, `bookslot`, `lexicon`), none of which currently has a real, live deployment, plus pulsewatch's own future instance. There is no continuously running, honest answer to "is it actually up right now, and did I meet my SLO" for whatever of this does run — and no mechanism that tells this developer the moment it isn't. Correctness here is about the system continuing to tell the truth over hours and days — surviving its own restarts, never double-alerting, never missing a real outage — not a single request's output. See `00-project-brief.md` for full framing.
 
@@ -64,45 +80,48 @@
 **Current stack:**
 - Frontend: SvelteKit
 - Backend: Go 1.25 (Gin)
-- Data: PostgreSQL (plain — TimescaleDB explicitly rejected in Session 1), Redis
-- Infra: Docker Compose, GitHub Actions, OpenTelemetry Collector (planned)
+- Data: PostgreSQL (plain — TimescaleDB explicitly rejected in Session 1), Redis (available, not load-bearing for scheduling — ADR-0001)
+- Infra: Docker Compose, GitHub Actions, OpenTelemetry Collector (designed this session — ADR-0003; not yet added to `docker-compose.yml`, that's Session 4 work)
 - Testing: Go's `testing` package, Vitest
 
 **Architecture decisions that must not be reversed:**
 - Licence is AGPL-3.0 (hostable app, not a library).
 - Primary frontend/backend framework pair is fixed (Go + Gin, SvelteKit) — frozen against the portfolio-wide framework allocation ledger.
 - Exactly two deep SDLC phases: Release & Deployment, Operations & Maintenance.
-- Exactly two new technologies for the learning budget: Go concurrency patterns, OpenTelemetry collector pipelines — plain PostgreSQL, not TimescaleDB, is an explicit Session-1 decision derived from this cap.
-- **New this session:** proposed numeric defaults (30s check interval, 3-failure threshold, 400-day rollup retention) and the full NFR numeric target set in `02-requirements.md` — treat as resolved defaults for Architecture to design against, adjustable with reasoning, not blank slate.
+- Exactly two new technologies for the learning budget: Go concurrency patterns, OpenTelemetry collector pipelines — plain PostgreSQL, not TimescaleDB.
+- **New this session, must not be silently reversed:** ADR-0001 (Postgres row leasing for restart-safety/exclusivity), ADR-0002 (explicit alert-suppression state machine with DB-enforced exactly-once transitions), ADR-0003 (agent-initiated push only, both for results and for assignment discovery), ADR-0004 (bounded worker pool, 1s tick, context-based graceful drain tied to ADR-0001's leasing) — see `docs/adr/` for full reasoning, `09-decision-log.md` for the short index.
 
 **Implementation state:**
-- Done: repository skeleton, licence, governance docs, minimal real Go/Gin backend and SvelteKit frontend with passing tests and clean lint, real CI, working `docker compose up`, finalised project brief/build-vs-alternatives/scope-and-non-goals (Session 1), and now a complete requirements document — user stories, FRs, NFRs, roles, data classification, integration requirements (Session 2).
+- Done: repository skeleton, licence, governance docs, minimal real Go/Gin backend and SvelteKit frontend with passing tests and clean lint, real CI, working `docker compose up`, finalised project brief/build-vs-alternatives/scope-and-non-goals (Session 1), a complete requirements document (Session 2), and now a complete, decided architecture — four real ADRs, system/container/sequence diagrams, and a concrete rollup/retention data model (Session 3).
 - In progress: nothing mid-flight.
-- Not started: everything product-related — no monitoring logic, agent code, scheduler, or alerting exists yet; architecture design begins at Session 3.
+- Not started: all actual implementation — no monitoring logic, agent code, scheduler, worker pool, leasing, alert state machine, or migrations exist yet. Session 3 designed exactly what Session 4 needs to build; nothing has been built.
 
 **Constraints and non-goals:**
-- Max 2 new technologies for this repo — already at cap (Go concurrency, OTel pipelines); TimescaleDB, Prometheus/Grafana, and any other third technology are explicit non-goals.
+- Max 2 new technologies for this repo — already at cap (Go concurrency, OTel pipelines); TimescaleDB, Prometheus/Grafana, and any other third technology are explicit non-goals — this session reaffirmed the OTel self-observability use stays scoped to server-internal instrumentation exported via the same collector, explicitly not a Grafana/Prometheus visualization backend.
 - Full non-goals table (8 rows, with reconsider-triggers) is in `01-scope-and-non-goals.md`.
-- v1 is single-operator; no multi-user auth/role separation or public status page exists at v1 (`02-requirements.md` roles matrix confirms this against the non-goals table).
+- v1 is single-operator; no multi-user auth/role separation or public status page exists at v1.
 
 **Deep SDLC phases for this repo:** Release & Deployment, Operations & Maintenance
-**Intentionally light phases:** Discovery & Planning (deep in `lexicon`), Requirements Analysis (this session — deep in `privacy-forge`), Verification & Testing (deep in `lexicon`), Retirement & Handover (deep in `privacy-forge`)
+**Intentionally light phases:** Discovery & Planning (deep in `lexicon`), Requirements Analysis (deep in `privacy-forge`), Verification & Testing (deep in `lexicon`), Retirement & Handover (deep in `privacy-forge`)
+**Baseline-depth, but with real ADRs on their own merits:** Architecture & Design (this session) — see `00a-ledger-confirmation.md` for why phase-depth and ADR rigor are independent axes in this portfolio's convention.
 
 **Task for this session (single objective) — now complete:**
-Turn the MVP boundary and continuous-operation properties from Session 1 into concrete functional and non-functional requirements. **Done — see Work completed above.**
+Design the concrete architecture for scheduler restart-safety, alert suppression, agent reachability, and the Go concurrency model, as real ADRs with options-considered reasoning, plus a rollup/retention data model and tying diagrams. **Done — see Work completed above.**
 
 **Definition of done — met:**
-- User stories and acceptance criteria are concrete and testable, covering restart-safety and rolling-window-SLO properties as real Given/When/Then criteria, not narrative.
-- NFRs have real numeric targets specific to continuous operation (alert latency, restart recovery, scheduling jitter, rollup timing).
-- Roles/permissions and data classification are sized to this repo's actual scope, not copied at privacy-forge's complexity level.
-- The private-target-reachability requirement is concrete (FR-017/018/019), not just restated justification.
-- `docs/SDLC-EVIDENCE.md`'s Phase 2 row and this handoff are updated.
+- Four real ADRs (`docs/adr/`), each with options considered and real trade-offs stated, matching this portfolio's established ADR format.
+- `03-architecture.md` ties them together with system/container/sequence diagrams.
+- `04-data-model.md` reflects the rollup/retention strategy concretely — real schema (declarative partitioning, partial unique index, single-tier hourly rollup), not just prose.
+- `docs/SDLC-EVIDENCE.md`'s Phase 3 row and this handoff are updated.
 
-**Files to attach or paste for Session 3:**
-- `docs/project-memory/00-project-brief.md`
-- `docs/project-memory/00b-build-vs-alternatives.md`
-- `docs/project-memory/01-scope-and-non-goals.md`
+**Files to attach or paste for Session 4:**
 - `docs/project-memory/02-requirements.md`
+- `docs/adr/ADR-0001-scheduler-restart-safety-leasing.md`
+- `docs/adr/ADR-0002-alert-suppression-state-machine.md`
+- `docs/adr/ADR-0003-agent-push-reachability-model.md`
+- `docs/adr/ADR-0004-go-concurrency-worker-pool.md`
+- `docs/project-memory/03-architecture.md`
+- `docs/project-memory/04-data-model.md`
 - `docs/project-memory/12-session-handoff.md` (this file)
 
-**Ground rules:** Do not change the stack. Do not introduce a third new technology. Do not expand the deep-SDLC-phase count beyond two. Session 3 (Architecture & Design) is baseline-depth but is where formal ADRs begin (per `00a-ledger-confirmation.md`) — design against `02-requirements.md`'s FR/NFR set, don't silently drop or expand it.
+**Ground rules:** Do not change the stack. Do not introduce a third new technology. Do not expand the deep-SDLC-phase count beyond two. Do not reopen the TimescaleDB-vs-Postgres decision, or any of the four ADRs from this session, without new measured evidence per their own Revisit triggers — design around them. Session 4 (Implementation) should treat `05-api-contracts.md` as a needed first step (or a short preceding session) before or alongside building the scheduler/leasing/alert-state-machine code the four ADRs specify.
