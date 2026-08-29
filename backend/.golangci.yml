@@ -8,6 +8,16 @@ linters:
   enable:
     - gocritic
     - revive
+    # Context propagation is load-bearing correctness here, not a style
+    # nicety: ADR-0004's graceful shutdown depends on every blocking
+    # operation (check execution, Postgres claim/release, HTTP dials)
+    # actually observing context cancellation, and ADR-0001's leasing
+    # depends on check execution never outliving its own context.
+    - contextcheck # flags a context.Context not propagated from its parent
+    - containedctx # flags a context.Context stored in a struct field instead of passed explicitly
+    - fatcontext # flags a context.Context created/nested inside a loop
+    - noctx # flags an HTTP request built without a context.Context (target checks, ADR-0004's per-check timeout)
+    - bodyclose # flags an unclosed HTTP response body — a real leak risk for a process making outbound checks continuously for days
 
 formatters:
   enable:

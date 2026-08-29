@@ -8,11 +8,25 @@ on:
 
 jobs:
   backend:
-    name: Backend (lint, vet, tests, vuln scan)
+    name: Backend (lint, vet, tests, vuln scan, migrations)
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: backend
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: pulsewatch
+          POSTGRES_PASSWORD: pulsewatch
+          POSTGRES_DB: pulsewatch
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U pulsewatch -d pulsewatch"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
 
@@ -35,6 +49,17 @@ jobs:
 
       - name: govulncheck
         run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
+      - name: Install migrate CLI
+        run: go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@v4.19.1
+
+      - name: Run migrations against a fresh Postgres, verify down reverses cleanly, re-apply up
+        env:
+          DATABASE_URL: postgres://pulsewatch:pulsewatch@localhost:5432/pulsewatch?sslmode=disable
+        run: |
+          migrate -path=./migrations -database="$DATABASE_URL" up
+          migrate -path=./migrations -database="$DATABASE_URL" down -all
+          migrate -path=./migrations -database="$DATABASE_URL" up
 
   frontend:
     name: Frontend (lint, build, tests)
@@ -65,6 +90,19 @@ jobs:
 
       - name: npm audit
         run: npm audit --omit=dev
+
+  otel-collector-config:
+    name: OTel Collector config validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate otel-collector-config.yaml
+        run: >-
+          docker run --rm
+          -v ${{ github.workspace }}/otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml
+          otel/opentelemetry-collector-contrib:0.159.0
+          validate --config=/etc/otelcol-contrib/config.yaml
 
   gitleaks:
     name: Secret scanning (gitleaks)

@@ -1,0 +1,68 @@
+# OTel Collector config — scoped exactly to what 03-architecture.md's
+# "Where OpenTelemetry actually fits" section specifies: two logically
+# distinct pipelines through one collector, no visualization backend.
+#
+# 1. Agent telemetry (logs pipeline, ADR-0003): receives agent OTLP check
+#    results + heartbeats and forwards them, unmodified in substance, to
+#    the server's own /v1/logs ingestion endpoint — the server (not the
+#    collector) is the sole Postgres writer. The headers_setter extension
+#    preserves the agent's Authorization bearer header end-to-end, exactly
+#    as docs/architecture/openapi.yaml's /v1/logs operation requires, so
+#    the server can authenticate the forwarded request with the same
+#    agentToken scheme /agent/assignments uses.
+# 2. Self-observability (traces + metrics pipelines): the server's own
+#    scheduler/worker-pool/alert-state-machine instrumentation
+#    (ADR-0001/ADR-0002/ADR-0004). Explicitly out of scope for v1 is any
+#    visualization backend (Grafana/Prometheus would reintroduce the
+#    excluded third technology, 01-scope-and-non-goals.md) — exported via
+#    the debug exporter so the instrumentation exists and is inspectable,
+#    not rendered on a dashboard.
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+  headers_setter:
+    headers:
+      - action: upsert
+        key: Authorization
+        from_context: Authorization
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+        include_metadata: true # required for headers_setter to read the incoming Authorization header
+
+processors:
+  batch: {}
+
+exporters:
+  # Agent-telemetry pipeline target: the server's OTLP/HTTP log-ingestion
+  # endpoint. otlphttp appends the standard /v1/logs path itself, matching
+  # the exact path docs/architecture/openapi.yaml specifies.
+  otlphttp/pulsewatch:
+    endpoint: http://backend:8080
+    auth:
+      authenticator: headers_setter
+  # Self-observability sink: inspectable, structured output — no backend.
+  debug:
+    verbosity: basic
+
+service:
+  extensions: [health_check, headers_setter]
+  pipelines:
+    logs:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlphttp/pulsewatch]
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [debug]
+    metrics:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [debug]

@@ -27,6 +27,29 @@ services:
       timeout: 5s
       retries: 10
 
+  migrate:
+    image: migrate/migrate:v4.19.1
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./backend/migrations:/migrations:ro
+    command:
+      - "-path=/migrations"
+      - "-database=${DATABASE_URL:-postgres://pulsewatch:pulsewatch@postgres:5432/pulsewatch?sslmode=disable}"
+      - "up"
+    restart: "no"
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.159.0
+    restart: unless-stopped
+    volumes:
+      - ./otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml:ro
+    ports:
+      - "4327:4317" # OTLP gRPC — agent telemetry + server self-observability
+      - "4328:4318" # OTLP HTTP
+      - "13143:13133" # health_check extension — no shell/wget in this image, so no docker-level healthcheck; verify via GET here
+
   backend:
     build: ./backend
     restart: unless-stopped
@@ -40,6 +63,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
       interval: 5s

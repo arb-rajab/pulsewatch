@@ -1,6 +1,6 @@
 # pulsewatch
 
-> **Status:** 🚧 Session 1 complete — discovery and planning only.
+> **Status:** 🚧 Session 4 complete — environment, schema, and CI baseline.
 > No monitoring logic, agent code, or alerting exists yet. See
 > [`docs/project-memory/12-session-handoff.md`](docs/project-memory/12-session-handoff.md)
 > for current state and next steps.
@@ -29,13 +29,14 @@ Stack: Go 1.25 (Gin) · SvelteKit · PostgreSQL · Redis.
 ## Project status
 
 This repository is built through a session-based workflow. Current phase:
-**Session 1 (Discovery & Planning) — complete.** Next: Session 2
-(Requirements Analysis).
+**Session 4 (Environment, Repository Setup, Standards, and CI Baseline) —
+complete.** Next: Session 5 (feature implementation, starting with the
+scheduler/leasing mechanism).
 
 Full portfolio context: this is a flagship repository in a broader
 public/private software portfolio. See `docs/project-memory/` for the
-complete project memory pack, and `docs/SDLC-EVIDENCE.md` (populated once
-the deep phases land) for the phase-by-phase evidence map.
+complete project memory pack, and `docs/SDLC-EVIDENCE.md` for the
+phase-by-phase evidence map.
 
 ## Quickstart
 
@@ -43,12 +44,19 @@ the deep phases land) for the phase-by-phase evidence map.
 docker compose up --build
 ```
 
+This boots Postgres (with every migration applied — `targets`,
+`target_schedule`, `check_results`, `check_rollups_hourly`, `incidents`,
+`alert_channels`, `alert_dispatches`, `agents`, `operators`), Redis, the
+OTel Collector, the backend, and the frontend.
+
 - Backend health check: `http://localhost:8020/health`
 - Frontend: `http://localhost:3003`
+- OTel Collector health: `http://localhost:13143/`
 
-This currently boots a bare skeleton — no monitoring, agent, or alerting
-functionality exists yet. Real functionality begins once Discovery,
-Requirements, and Architecture (Sessions 1–3) land.
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the full setup and migration
+workflow. This currently boots the real schema and infrastructure with no
+monitoring, agent, or alerting business logic yet — that begins with
+Session 5.
 
 ## Documentation
 

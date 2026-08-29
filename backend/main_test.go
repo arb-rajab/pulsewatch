@@ -13,7 +13,7 @@ func TestHealthReturns200OK(t *testing.T) {
 	router := setupRouter()
 
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest(http.MethodGet, "/health", nil)
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, "/health", nil)
 	router.ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK {
