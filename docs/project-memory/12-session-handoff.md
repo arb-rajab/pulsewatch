@@ -7,122 +7,100 @@
 - Current version or branch: `main` (unreleased, pre-v0.1.0)
 
 ## Session completed
-- Session number and title: **Session 0 — Portfolio Governance & Technology Allocation**
-- Objective: Confirm the ledger row, learning budget, and non-goals before any architecture work begins.
+- Session number and title: **Session 1 — Project Discovery & Business Framing**
+- Objective: Validate every assumption in the draft brief with real reasoning, and produce the finalised `00-project-brief.md` plus `01-scope-and-non-goals.md` — framing the problem around continuous operation and real infrastructure monitoring, not a request/response product.
 - Status: **complete**
 
 ## Work completed
-- Confirmed framework allocation: **Go 1.25 + Gin (backend) + SvelteKit (frontend)** — verified `UNIQUE`, zero collisions against the master ledger (`privacy-forge` uses Laravel/Vue, `lexicon` uses FastAPI/Next.js).
-- Confirmed learning budget: exactly 2 new technologies (Go concurrency patterns — worker pools, context cancellation, graceful shutdown; OpenTelemetry collector pipelines) — at cap, not over.
-- Confirmed the two deep SDLC phases for this repo: **Release & Deployment** and **Operations & Maintenance** — chosen because pulsewatch is the portfolio's first genuinely continuous, operated system (correctness is partly about behaviour across hours/days, not just within a single request), unlike every other flagship which is request/response.
-- Confirmed ship-ability estimate is within the ≤120-hour guideline; the full hour estimate is deferred to Session 1 pending MVP sizing.
-- Created repository skeleton: directory structure, licence (AGPL-3.0), `SECURITY.md`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `CHANGELOG.md`, `README.md` (status: skeleton with non-goals preview).
-- Scaffolded the full 15-file Project Memory Pack under `docs/project-memory/`, plus the separate `00a-ledger-confirmation.md`.
-- Wrote a draft `00-project-brief.md` (marked STUB — to be validated and finalised in Session 1), explicitly framing the problem around continuous operation rather than a request/response product.
-- Built a minimal, real Go + Gin backend (single `/health` endpoint, passing test, `golangci-lint` configured and clean) and a minimal, real SvelteKit frontend (placeholder page, `/health` route, passing `vitest` test, `eslint` clean).
-- Wrote `docker-compose.yml` (PostgreSQL, Redis, backend, frontend) with working health checks on all four services — booted and verified locally.
-- Wrote a **real** CI pipeline from the first commit (`golangci-lint`, `go vet`, `go test -race`, `govulncheck` for the backend; `eslint`, build, `vitest` for the frontend; `gitleaks`; CodeQL for Go + JS/TS) — learning from `privacy-forge`'s Session 0 mistake (placeholder CI that needed rework) and `lexicon`'s correct Session 0 (real CI immediately).
-- Added GitHub issue templates (bug, feature, security) and a PR template.
-- Initialised git, verified `.gitignore` excludes the local `.claude/` tooling directory (confirmed present in this environment before writing the ignore rules) plus standard Go/Node/Docker/IDE/OS artifacts, and made the first commit.
+- Rewrote `00-project-brief.md` in full — no "draft" markers remain. Reframed the problem statement around genuine dogfooding: the primary user is this developer, and the monitored infrastructure is this developer's own live/demo deployments of `privacy-forge`, `laravel-consent-guard`, `bookslot`, and `lexicon`, plus pulsewatch monitoring itself — a bounded, currently-existing target set (~5–10 services), not a hypothetical persona the way `bookslot`'s tattoo-studio framing necessarily was.
+- Named a "the framing that governs this whole document" section up front, explicitly contrasting pulsewatch's continuous-operation correctness model against every other flagship's request/response model, and carried that framing through every subsequent section rather than defaulting into a CRUD-feature-list treatment.
+- Added a new **Continuous operation requirements** section decomposing "runs continuously and stays correct" into four concrete, individually verifiable properties: (1) restart mid-check-cycle must not corrupt scheduling truth, (2) a check must never overlap its own still-running previous run, (3) retention/rollup over weeks of data, (4) SLO/alerting correctness as a rolling-window property rather than a single-check property (hysteresis, excluding pulsewatch's own downtime from target SLO math, restart-safe alert de-duplication).
+- Made the deferred **TimescaleDB vs. plain PostgreSQL** decision, with real reasoning tied directly to property (3) above: plain PostgreSQL with a hand-rolled Go rollup/retention job, because (a) TimescaleDB would be a third new technology and break the learning budget frozen at exactly two in `00a-ledger-confirmation.md` (Rule D3), (b) the actual measured-scale data volume (~10 targets, 30–60s intervals, ~10M rows/year worst case) doesn't need it, (c) hand-rolling the rollup job is more aligned with this repo's own Operations & Maintenance deep phase and Go concurrency learning objective than delegating it to an extension would be. Recorded as a real decision, explicitly flagged for Session 3 to formalize as ADR-0001 if it wants to, since `00a-ledger-confirmation.md` records that formal ADRs begin at Session 3, not this one.
+- Wrote `docs/project-memory/00b-build-vs-alternatives.md` — a genuine options-considered comparison (hosted uptime SaaS / self-hosted Grafana+Prometheus+Alertmanager as-is / purpose-built pulsewatch), matching the rigor of `lexicon/docs/project-memory/00b-rag-vs-alternatives.md`. Stated the real trade-off honestly: for the narrow "alert on a public URL going down" goal, a hosted SaaS is genuinely less effort and probably more reliable on day one — the justification for building pulsewatch instead is reachability of private/internal targets a SaaS structurally cannot reach, honoring (not exceeding) the learning budget already frozen in Session 0, and real dogfooding value that adopting either alternative as-is cannot produce by construction. Also gave the honest counter-case for Option B (Grafana+Prometheus is likely the *right* call at real multi-team scale — rejected for this deployment's scale and learning-budget constraints, not rejected universally).
+- Wrote `docs/project-memory/01-scope-and-non-goals.md`: an MVP boundary as a checkable bullet list (HTTP/TCP checks, per-target hysteresis, restart-safe per-target-exclusive scheduling, Postgres history + rollup/retention job, rolling-window SLO math excluding pulsewatch's own downtime, persisted incident state, webhook/email alerting, the lightweight agent, a minimal dashboard); an explicit non-goals table (8 rows, each with a reason and a reconsider-trigger) formalizing the README's Session-0 preview and adding new ones this session's analysis surfaced (a third new technology, multi-region probing, public status pages); a "deferred to backlog" list; and a "definition of v1 complete" that requires the 5 success metrics to be demonstrated against real scenarios *and* a sustained real dogfooding period (proposed 2+ weeks), not just "features implemented."
+- Defined 5 success metrics in `00-project-brief.md`, each stated as what will be measured (not a fabricated number), specific to what a continuously-operated system needs to prove: bounded real-outage detection time, no alert on a sub-threshold transient blip, no lost state / no double-alert across a server restart mid-incident, correct (not just non-crashing) rollup/retention, and per-target concurrent-check-safety under a slow target.
+- Updated `docs/SDLC-EVIDENCE.md`'s Phase 1 (Discovery & Planning) row with real evidence links into the three files above, keeping the depth marker `light` (per this repo's own ledger declaration — Phases 6/7 are the deep ones here, not this one).
 
 ## Files created or changed
-- `docs/project-memory/00a-ledger-confirmation.md` — frozen governance record; Session 3 checks this before starting architecture work.
-- `docs/project-memory/00-project-brief.md` — draft brief; **will be rewritten, not appended to, in Session 1**.
-- `docs/project-memory/01-scope-and-non-goals.md` through `14-maintenance-and-retirement.md` — empty templates from the standard scaffold, ready for their respective sessions.
-- `docs/SDLC-EVIDENCE.md` — scaffolded with Phases 6 and 7 declared deep; populated with real evidence links as those sessions land.
-- `README.md` — skeleton with status banner and non-goals preview.
-- `LICENSE` — AGPL-3.0 (rationale: hostable application, not a library — recorded so this isn't silently changed later).
-- `SECURITY.md`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `CHANGELOG.md` — standard governance docs.
-- `.github/workflows/ci.yml` — real pipeline (not a placeholder): backend job (golangci-lint, go vet, go test -race, govulncheck), frontend job (eslint, build, vitest, npm audit), gitleaks, CodeQL (go + javascript-typescript).
-- `.github/PULL_REQUEST_TEMPLATE.md`, `.github/ISSUE_TEMPLATE/*.yml` — contribution scaffolding.
-- `backend/` — `go.mod`, `go.sum`, `main.go` (Gin, `/health`), `main_test.go`, `.golangci.yml`, `Dockerfile`, `.dockerignore`.
-- `frontend/` — SvelteKit skeleton (`package.json`, `svelte.config.js`, `vite.config.ts`, `src/app.html`, `src/routes/+page.svelte`, `src/routes/health/+server.ts`, `src/routes/page.test.ts`, `eslint.config.js`), `Dockerfile`, `.dockerignore`.
-- `docker-compose.yml` — PostgreSQL, Redis, backend, frontend, with health checks.
-- `.env.example` — Session-0 skeleton defaults only, no real secrets.
-- `.gitignore` — comprehensive: `.env`, Go build artifacts, Node/SvelteKit build artifacts (`node_modules/`, `.svelte-kit/`, `build/`), `.claude/` (confirmed present locally), `.vscode/`, `.idea/`, OS files.
+- `docs/project-memory/00-project-brief.md` — rewritten in full; no draft markers remain.
+- `docs/project-memory/00b-build-vs-alternatives.md` — new; the build-vs-SaaS-vs-Grafana/Prometheus comparison.
+- `docs/project-memory/01-scope-and-non-goals.md` — written in full; MVP boundary, non-goals table, backlog, definition of v1 complete.
+- `docs/SDLC-EVIDENCE.md` — Phase 1 row populated with evidence links.
+- `docs/project-memory/12-session-handoff.md` — this file.
 
 ## Decisions made
-- **Licence: AGPL-3.0**, not MIT — because this is a hostable application (per the portfolio rule: MIT for libraries/tools, AGPL for hostable apps). Should not be silently changed without a recorded reason.
-- **Framework allocation is frozen** at Go 1.25 + Gin (backend) + SvelteKit (frontend). Must not be silently reversed — doing so would require reopening the entire ledger and re-checking all flagship rows for new collisions.
-- **Exactly two deep SDLC phases** (Release & Deployment, Operations & Maintenance) are committed. A third should not quietly creep in during later sessions (Rule D2). Requirements Analysis and Retirement/Handover are already deep elsewhere (`privacy-forge`); Discovery and Verification & Testing are already deep in `lexicon` — this repo deliberately does not duplicate that depth.
-- **CI is real from the first commit**, not a placeholder — an explicit lesson carried over from `privacy-forge`'s Session 0 (which shipped a placeholder and had to redo it) and confirmed working by `lexicon`'s Session 0.
-- Gin's latest release (v1.12.0) requires Go ≥1.25, so the module targets **Go 1.25** rather than 1.23 — discovered and corrected during Session 0 verification, not assumed.
-- Docker Compose host ports (5435/6382/8020/3003) are deliberately offset from `privacy-forge` (5432/6379/8000/5173) and `lexicon` (5433/6380/8010/3001, plus a `-prod` variant on 5434/6381/8011/3002) so all flagships can run concurrently on this machine without collision — 3002 was tried first but was already taken by `lexicon-prod-frontend-1`, discovered and corrected during verification.
-- No formal ADR yet — ADRs begin at Session 3. This session's decisions are governance decisions, not architecture decisions, and are recorded here and in `00a-ledger-confirmation.md` instead.
+- **Plain PostgreSQL, not TimescaleDB**, for check-history storage and rollups — hand-rolled Go retention/rollup job instead of a database extension. Reasoning: honors the learning budget frozen at exactly two new technologies in `00a-ledger-confirmation.md`; the project's actual measured-scale data volume doesn't need TimescaleDB's value proposition; hand-rolling the job is more aligned with the Operations & Maintenance deep phase and the Go concurrency learning objective than delegating it would be. Not yet a formal ADR (ADRs begin Session 3 per `00a-ledger-confirmation.md`); Session 3 should reference `00-project-brief.md` §3 rather than re-derive this.
+- **Build pulsewatch rather than adopt a hosted SaaS or self-hosted Grafana+Prometheus as-is** — full reasoning in `00b-build-vs-alternatives.md`. The trade-off is stated honestly: a SaaS is less effort for the narrow "alert on a public outage" goal; the decision to build is justified by reachability requirements a SaaS cannot meet, the already-frozen learning budget, and genuine dogfooding value, not asserted as the universally superior engineering choice.
+- **MVP scope is checks + hysteresis + restart-safe scheduling + rollup/retention + rolling-window SLO math + webhook/email alerting + a minimal dashboard + the agent** — no status pages, no multi-region probing, no native paging-escalation product at v1 (`01-scope-and-non-goals.md`).
+- **"v1 complete" requires a sustained real dogfooding period**, not just feature completion — because the actual point of this repository is genuine continuous operation against this developer's own infrastructure, and that can only be demonstrated by actually running it, not by a one-time demo.
 
 ## Validation performed
-- `go vet ./...` and `go test ./... -race -v` — passed (inside a `golang:1.25-alpine` container, since Go is not installed on the host).
-- `golangci-lint run` — initially found 2 real issues (unchecked `r.Run` error in `errcheck`; missing package comment in `revive`); both fixed, then re-verified clean.
-- `npm run build`, `npm test` (vitest), `npm run lint` (eslint) — all passed on the host (Node is installed locally).
-- `npm audit --omit=dev` — 0 vulnerabilities (the CI gate's exact command). Full `npm audit` (including dev deps) has 3 low-severity transitive findings from `@sveltejs/kit`'s own `cookie` dependency with no safe fix available yet; accepted for a Session-0 skeleton since the CI gate is clean.
-- `docker compose up --build` — all four services (postgres, redis, backend, frontend) reached a healthy state; backend `/health` and frontend `/health` both returned real 200 responses over HTTP from the host (curl), not just container-internal health checks. Verified twice: once before the first commit, once again after the final CI fix (below) to confirm the updated `go.sum` still builds and boots clean. Port 3002 collided with an already-running `lexicon-prod-frontend-1` on this machine; moved the frontend to 3003 (documented in the decision log above).
-- `git status` immediately after the first commit — clean (verified, not assumed); `git status --ignored` confirmed `.claude/`, `node_modules/`, `.svelte-kit/`, and `build/` are correctly excluded.
-- Pushed to `origin/main`. CI was **not** green on the first push — three follow-up fix commits were needed, each verified by watching the actual GitHub Actions run (`gh run watch`) rather than assuming:
-  1. `golangci-lint-action@v6` with `version: latest` resolved to golangci-lint v1.64.8 (built with Go 1.24), which refuses to lint a `go 1.25.0` module. Pinned `version: v2.13.2`.
-  2. That pin then failed outright: `golangci-lint-action@v6` doesn't support golangci-lint v2 at all ("you must update to golangci-lint-action v7"). Bumped the action itself to `@v9` (latest major, verified to exist via the GitHub API before pushing).
-  3. `govulncheck` then caught a **real** vulnerability: `quic-go` v0.59.0 (pulled in transitively by Gin's HTTP/3 support) has GO-2026-5676, an HTTP/3 QPACK memory-exhaustion DoS, reachable through `gin.Engine.Run`. Fixed in v0.59.1 — bumped via `go get` + `go mod tidy`, re-verified `govulncheck` reports 0 vulnerabilities.
-  - Final state, confirmed via the GitHub Checks API (`gh api repos/.../commits/main/check-runs`), not just the watch output: all 5 checks (`Backend`, `Frontend`, `CodeQL (go)`, `CodeQL (javascript-typescript)`, `Secret scanning`) show `completed success` on the current `main` HEAD.
+- Cross-checked every new claim in `00-project-brief.md` and `00b-build-vs-alternatives.md` against `00a-ledger-confirmation.md` (frozen record) to confirm nothing here silently reopens the frozen framework allocation, the two-technology learning budget, or the two-deep-SDLC-phase commitment — none were touched; the TimescaleDB rejection and the Grafana/Prometheus rejection are both derived *from* the frozen budget, not in tension with it.
+- Read `lexicon/docs/project-memory/00b-rag-vs-alternatives.md` directly (cross-repo, read-only) before writing `00b-build-vs-alternatives.md`, to match its structure (Context / Options considered — for/against/verdict / Decision / Trade-offs accepted / Consequences / Revisit triggers) and its standard of honesty about the rejected options' real strengths, rather than writing a one-sided justification.
+- Confirmed no implementation code, dependency, or config file was touched this session — this session is discovery/planning documentation only, per the ground rules; `privacy-forge`, `laravel-consent-guard`, `bookslot`, and `lexicon` were not modified (read-only reference to `lexicon`'s file only).
+- Re-read the finished `00-project-brief.md`, `00b-build-vs-alternatives.md`, and `01-scope-and-non-goals.md` end to end to confirm no "draft"/"TBD"/stub language remains and every section is framed around continuous operation rather than a single request/response cycle.
 
 ## Open questions and risks
-- **Open question:** how much of the alerting/SLO surface ships in v1 vs. backlog — needs a decision in Session 1 alongside the failure-cost analysis that will size the MVP boundary.
-- **Risk:** Go concurrency patterns and OTel collector pipelines are both genuinely new; timebox a learning spike before Session 3 architecture work if either proves a bigger lift than expected.
-- **Risk:** treating this like another request/response API and under-investing in the "runs continuously, must self-heal and be operable" concerns that are this repo's actual point. Session 1 must frame Discovery around continuous operation and real infrastructure monitoring, not a CRUD feature list.
-- **Risk (portfolio-level, not repo-level):** this repo occupies a "Now" slot per the WIP-limit governance rule — confirm with the Status Board owner that no other public-track repo is concurrently active.
-- **No blockers.** Session 1 can start immediately.
+- **Open question:** exact check-interval and consecutive-failure-threshold defaults are not fixed yet — deliberately left for Requirements Analysis (Session 2) / Architecture (Session 3) rather than invented here without a real basis.
+- **Risk (carried forward):** Go concurrency patterns and OTel collector pipelines are both genuinely new; timebox a learning spike before Session 3 architecture work if either proves a bigger lift than expected.
+- **Risk (carried forward, now mitigated by this session's framing but not yet by any code):** the actual restart-safety and overlapping-run-prevention properties named in `00-project-brief.md` §3 still have to be designed correctly in Architecture (Session 3+) and then actually verified — naming them in Discovery reduces the risk of them being skipped, but doesn't yet prove they'll be built correctly.
+- **No blockers.** Session 2 (Requirements Analysis) can start immediately.
 
 ## Next recommended session
-- Proposed session title: **Session 1 — Project Discovery & Business Framing**
-- Single objective: Validate (or revise) every assumption in the draft brief with real reasoning, and produce the finalised `00-project-brief.md` plus `01-scope-and-non-goals.md` — **specifically framing the problem around continuous operation and real infrastructure monitoring, not a request/response product like this portfolio's other flagships.**
-- Inputs required: this handoff; `00a-ledger-confirmation.md`; the draft `00-project-brief.md`.
-- Expected deliverables: finalised project brief (no "draft" markers remaining); scope and non-goals document; 5 concrete success metrics; explicit MVP boundary.
-- Definition of done: Gate 1→2 checklist satisfied (problem statement, target users, stakeholders, assumptions, risks, feasibility note, success metrics, MVP boundary, non-goals — all written and no longer marked draft, and explicitly reasoned in terms of a continuously-operated system rather than a single request/response cycle).
+- Proposed session title: **Session 2 — Requirements Analysis**
+- Single objective: Turn the MVP boundary and continuous-operation requirements from this session into concrete functional and non-functional requirements (`02-requirements.md`) — including explicit, testable requirements for the four continuous-operation properties named in `00-project-brief.md` §3 (restart safety, overlapping-run prevention, retention/rollup, rolling-window SLO correctness), since Requirements Analysis is intentionally a baseline (not deep) phase here and must not silently become the place where those properties get re-litigated instead of formalized.
+- Inputs required: this handoff; `00-project-brief.md`; `00b-build-vs-alternatives.md`; `01-scope-and-non-goals.md`.
+- Expected deliverables: `02-requirements.md` with functional requirements (per MVP boundary item) and non-functional requirements (per continuous-operation property), each testable.
+- Definition of done: every MVP boundary checklist item and every continuous-operation property has at least one corresponding requirement; no requirement introduces scope beyond `01-scope-and-non-goals.md`'s boundary without flagging it back to this session's scope decision first.
 
 ## Paste-into-new-session context
 
 **Project:** pulsewatch — self-hosted uptime, SLO, and alerting service with a lightweight agent
 **Track:** public flagship
-**Repository state:** branch `main`, unreleased (pre-v0.1.0), Session 0 complete
+**Repository state:** branch `main`, unreleased (pre-v0.1.0), Session 1 complete
 
-**Problem being solved:** Small engineering teams either bolt together uptime checks from disconnected tools or over-adopt a heavyweight observability platform, with no honest, continuously maintained answer to "is this service meeting its availability target, and who gets told the moment it isn't." Unlike this portfolio's other flagships, correctness here is about the system continuing to tell the truth over hours and days, not a single request's output.
+**Problem being solved:** This developer runs several self-hosted flagship deployments (`privacy-forge`, `laravel-consent-guard`, `bookslot`, `lexicon`) with no continuously running, honest answer to "is it actually up right now, and did I meet my SLO" — and no mechanism that tells them the moment it isn't. This is real dogfooding of this developer's own infrastructure, not a hypothetical buyer persona. Unlike this portfolio's other flagships, correctness here is about the system continuing to tell the truth over hours and days — surviving its own restarts, never double-alerting, never missing a real outage — not a single request's output.
 
-**Users:** Primary — an engineer/small SRE-adjacent team monitoring a bounded set of services. Secondary — the on-call engineer who receives and acts on an alert.
+**Users:** Primary and effectively only user — this developer, operating pulsewatch against their own bounded set of real deployments (~5–10 targets). "On-call" is the same person in an interrupt-driven mode (webhook/email), not a separate stakeholder.
 
 **Current stack:**
 - Frontend: SvelteKit
 - Backend: Go 1.25 (Gin)
-- Data: PostgreSQL, Redis
+- Data: PostgreSQL (plain — TimescaleDB explicitly rejected this session, see Decisions made), Redis
 - Infra: Docker Compose, GitHub Actions, OpenTelemetry Collector (planned)
 - Testing: Go's `testing` package, Vitest
 
 **Architecture decisions that must not be reversed:**
 - Licence is AGPL-3.0 (hostable app, not a library).
-- Primary frontend/backend framework pair is fixed (Go + Gin, SvelteKit) — frozen against the portfolio-wide framework allocation ledger; changing it requires reopening ledger governance, not just a local decision.
-- Exactly two deep SDLC phases for this repo: Release & Deployment, Operations & Maintenance. Do not let a third phase creep in — Requirements Analysis and Retirement/Handover are deliberately baseline here since they're deep elsewhere in the portfolio (`privacy-forge`), and Discovery/Verification & Testing are deep in `lexicon`.
+- Primary frontend/backend framework pair is fixed (Go + Gin, SvelteKit) — frozen against the portfolio-wide framework allocation ledger.
+- Exactly two deep SDLC phases: Release & Deployment, Operations & Maintenance.
+- Exactly two new technologies for the learning budget: Go concurrency patterns, OpenTelemetry collector pipelines — **plain PostgreSQL, not TimescaleDB, is now an explicit Session-1 decision derived from this cap**, not an oversight to revisit casually.
 
 **Implementation state:**
-- Done: repository skeleton, licence, governance docs, empty Project Memory Pack, draft (unvalidated) project brief, minimal real Go/Gin backend and SvelteKit frontend with passing tests and clean lint, real CI, working `docker compose up` with health checks.
+- Done: repository skeleton, licence, governance docs, minimal real Go/Gin backend and SvelteKit frontend with passing tests and clean lint, real CI, working `docker compose up`, and now — finalised project brief, build-vs-alternatives comparison, and scope/non-goals document (Session 1).
 - In progress: nothing mid-flight.
-- Not started: everything product-related — no monitoring logic, agent code, or alerting exists yet.
+- Not started: everything product-related — no monitoring logic, agent code, scheduler, or alerting exists yet; that begins at Requirements/Architecture (Sessions 2–3).
 
 **Constraints and non-goals:**
-- Max 2 new technologies for this repo (Go concurrency patterns, OpenTelemetry collector pipelines) — already at that cap; do not introduce a third new technology.
-- Explicit non-goals to be finalised in Session 1 but already anticipated (see README): APM/distributed tracing of user applications, log aggregation as a product, on-call scheduling/paging escalation trees, synthetic browser monitoring, multi-tenant SaaS billing.
+- Max 2 new technologies for this repo — already at cap (Go concurrency, OTel pipelines); TimescaleDB, Prometheus/Grafana, and any other third technology are explicit non-goals for this reason (`01-scope-and-non-goals.md`).
+- Full non-goals table (8 rows, with reconsider-triggers) is in `01-scope-and-non-goals.md`: no APM/tracing of user apps, no log aggregation product, no on-call paging/escalation, no synthetic browser monitoring, no multi-tenant SaaS billing, no third new technology, no multi-region probing, no public status pages at v1.
 
 **Deep SDLC phases for this repo:** Release & Deployment, Operations & Maintenance
-**Intentionally light phases:** Discovery & Planning and Verification & Testing (deep in `lexicon`), Requirements Analysis and Retirement & Handover (deep in `privacy-forge`)
+**Intentionally light phases:** Discovery & Planning (this session — deep in `lexicon`) and Verification & Testing (deep in `lexicon`), Requirements Analysis and Retirement & Handover (deep in `privacy-forge`)
 
-**Task for this session (single objective):**
-Conduct project discovery: validate the draft problem statement, users, and assumptions; identify real risks and success metrics; define the MVP boundary and non-goals — explicitly reasoning about this as a continuously-operated system, not a request/response product.
+**Task for this session (single objective) — now complete:**
+Conduct project discovery: validate the draft problem statement, users, and assumptions; identify real risks and success metrics; define the MVP boundary and non-goals — explicitly reasoning about this as a continuously-operated system, not a request/response product. **Done — see Work completed above.**
 
-**Definition of done:**
-- `00-project-brief.md` rewritten with no "draft" markers, every section validated with actual reasoning (not assumed).
-- `01-scope-and-non-goals.md` produced with an explicit non-goals table (reason for exclusion + condition that would reconsider it).
-- 5 concrete, checkable success metrics defined.
+**Definition of done — met:**
+- `00-project-brief.md` rewritten with no "draft" markers, every section validated with actual reasoning.
+- `01-scope-and-non-goals.md` produced with an explicit non-goals table (reason for exclusion + reconsider trigger).
+- 5 concrete, checkable success metrics defined, specific to continuous operation.
 - MVP boundary stated as a bullet list a reviewer could tick off.
 
-**Files to attach or paste:**
-- `docs/project-memory/00-project-brief.md` (current draft)
-- `docs/project-memory/00a-ledger-confirmation.md`
+**Files to attach or paste for Session 2:**
+- `docs/project-memory/00-project-brief.md`
+- `docs/project-memory/00b-build-vs-alternatives.md`
+- `docs/project-memory/01-scope-and-non-goals.md`
 - `docs/project-memory/12-session-handoff.md` (this file)
 
-**Ground rules:** Do not change the stack. Do not introduce a third new technology. Do not expand the deep-SDLC-phase count beyond two. Ask before introducing any new dependency or scope item not already anticipated above.
+**Ground rules:** Do not change the stack. Do not introduce a third new technology (TimescaleDB now explicitly excluded, not just undecided). Do not expand the deep-SDLC-phase count beyond two. Session 2 (Requirements Analysis) is intentionally baseline-depth — formalize requirements from this session's work, don't silently re-litigate the discovery decisions already made here.

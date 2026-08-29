@@ -1,6 +1,6 @@
 # pulsewatch
 
-> **Status:** 🚧 Session 0 complete — governance and repository skeleton only.
+> **Status:** 🚧 Session 1 complete — discovery and planning only.
 > No monitoring logic, agent code, or alerting exists yet. See
 > [`docs/project-memory/12-session-handoff.md`](docs/project-memory/12-session-handoff.md)
 > for current state and next steps.
@@ -29,7 +29,8 @@ Stack: Go 1.25 (Gin) · SvelteKit · PostgreSQL · Redis.
 ## Project status
 
 This repository is built through a session-based workflow. Current phase:
-**Session 0 (Governance) — complete.** Next: Session 1 (Discovery).
+**Session 1 (Discovery & Planning) — complete.** Next: Session 2
+(Requirements Analysis).
 
 Full portfolio context: this is a flagship repository in a broader
 public/private software portfolio. See `docs/project-memory/` for the
@@ -56,10 +57,13 @@ Requirements, and Architecture (Sessions 1–3) land.
   handoff, release notes, maintenance/retirement plan
 - [`SECURITY.md`](SECURITY.md) — vulnerability disclosure policy
 
-## Non-goals (preview — finalised in Session 1)
+## Non-goals
 
-pulsewatch monitors whether *your* infrastructure is up and meeting its
-SLOs. It deliberately does **not** aim to become:
+pulsewatch monitors whether *this developer's own* infrastructure is up and
+meeting its SLOs — it is built to genuinely monitor this portfolio's other
+flagships (`privacy-forge`, `laravel-consent-guard`, `bookslot`, `lexicon`)
+and itself, not a hypothetical third-party persona. It deliberately does
+**not** aim to become:
 
 - **APM / distributed tracing of user applications.** This watches uptime
   and SLOs from the outside; it does not instrument or trace what happens
@@ -72,12 +76,19 @@ SLOs. It deliberately does **not** aim to become:
 - **Synthetic browser monitoring.** No headless-browser scripted user
   journeys — this is endpoint/service health and SLOs, not UX simulation.
 - **A multi-tenant SaaS billing product.** This is a self-hosted service for
-  one organisation to run for itself, not a hosted product with tenants,
+  one operator to run for themselves, not a hosted product with tenants,
   plans, or billing.
+- **A third new technology** (TimescaleDB, Prometheus/Grafana, a message
+  queue). The learning budget for this repo is frozen at exactly two
+  (Go concurrency patterns, OpenTelemetry pipelines) — see
+  `docs/project-memory/00-project-brief.md`.
 
-The full, finalised non-goals list (with rationale and reconsideration
-conditions) lands in `docs/project-memory/01-scope-and-non-goals.md` at
-Session 1.
+Full rationale and reconsideration conditions for each non-goal, plus the
+MVP boundary, are in
+[`docs/project-memory/01-scope-and-non-goals.md`](docs/project-memory/01-scope-and-non-goals.md).
+The reasoning behind building this instead of a hosted SaaS or a self-hosted
+Grafana+Prometheus stack is in
+[`docs/project-memory/00b-build-vs-alternatives.md`](docs/project-memory/00b-build-vs-alternatives.md).
 
 ## Licence
 
