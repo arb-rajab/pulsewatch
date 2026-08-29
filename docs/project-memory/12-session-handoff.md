@@ -294,22 +294,19 @@
   started, or stopped by any command this session ran.
 
 ## Open questions and risks
-- **New, flagged for Session 5 (not a blocker, not silently changed):**
-  `04-data-model.md`'s ERD draws `OPERATORS ||--o{ TARGETS: "registers"`
-  and `OPERATORS ||--o{ ALERT_CHANNELS: "configures"`, but neither
-  `TARGETS`' nor `ALERT_CHANNELS`' own attribute list in that same
-  document includes an `operator_id` column — so neither migration adds
-  one. This is very likely intentional (v1 has exactly one operator row
-  in practice, per `04-data-model.md`'s own `operators` entity
-  description, and there is no ABAC), not a bug, but it means those two
-  relationship arrows in the ERD are currently definitional/conceptual
-  rather than backed by an actual foreign key. Implemented exactly as the
-  entity attribute tables specify, not "fixed" by silently adding an
-  undocumented column — if Session 5's actual API/handler implementation
-  finds it genuinely needs that column (e.g., to make a `PUT
-  /targets/{id}` ownership check literal rather than assumed), that's a
-  real, small, additive migration to write then, against the concrete
-  need, not speculative schema now.
+- **Resolved before Session 5 starts (was flagged here as an open
+  question):** the ERD's `OPERATORS ||--o{ TARGETS: "registers"` and
+  `OPERATORS ||--o{ ALERT_CHANNELS: "configures"` arrows implied an
+  `operator_id` column that no attribute table ever listed and no
+  migration ever added. Confirmed this session that the migrations were
+  correct and the arrows were the mistake: `02-requirements.md`'s roles
+  matrix states v1's single-operator shape as "the actual v1 shape," and
+  `01-scope-and-non-goals.md` lists multi-user auth/role separation as a
+  non-goal matching the actual use case, not a deferred-but-planned
+  feature — so an `operator_id` FK would be speculative schema, not a
+  documented gap. `04-data-model.md`'s ERD has been corrected to remove
+  both arrows; no migration was needed. Session 5 can proceed without
+  this in its open-questions list.
 - **No ADR reopened.** Every schema/tooling decision this session made
   (migration tool, Collector image/pipeline shape, lint rules, CI
   extension) is either explicitly named as deferred-to-this-session by an

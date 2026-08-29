@@ -19,8 +19,6 @@ erDiagram
     TARGETS ||--o{ CHECK_ROLLUPS_HOURLY : "aggregates into"
     TARGETS ||--o{ INCIDENTS : "opens"
     TARGETS }o--o| AGENTS : "assigned to (nullable)"
-    OPERATORS ||--o{ ALERT_CHANNELS : "configures"
-    OPERATORS ||--o{ TARGETS : "registers"
     INCIDENTS ||--o{ ALERT_DISPATCHES : "triggers"
     ALERT_CHANNELS ||--o{ ALERT_DISPATCHES : "receives"
 
@@ -115,6 +113,26 @@ erDiagram
 | `alert_dispatches` | Record of each attempted notification, for exactly-once verification and debugging | kind (opened/resolved), delivery_confirmed | Internal |
 | `agents` | Registered agent instances and their liveness (ADR-0003, NFR-008) | credential hash, report_interval, last_heartbeat_at | Agent credential: **Secret** |
 | `operators` | Single-operator account (v1: exactly one row in practice, but modeled as a table, not a config constant, so the schema doesn't have to change if that ever isn't true) | email, password_hash | **Secret** (password) |
+
+**No `operator_id` FK on `targets` or `alert_channels`, and no
+`OPERATORS`-to-`TARGETS`/`ALERT_CHANNELS` relationship in the ERD above
+(resolved, was previously a flagged inconsistency):** an earlier version
+of this ERD drew `OPERATORS ||--o{ TARGETS` and `OPERATORS ||--o{
+ALERT_CHANNELS` arrows implying an ownership column, while neither
+entity's attribute table below ever listed one — Session 4's migrations
+correctly built exactly what the attribute tables specified, which meant
+the arrows, not the schema, were wrong. `02-requirements.md`'s roles
+matrix states v1's single-operator shape explicitly as "the actual v1
+shape," not a placeholder for future role separation, and
+`01-scope-and-non-goals.md` lists multi-user auth/role separation as a
+non-goal "matching the actual use case" — not a deferred-but-planned
+feature. With exactly one operator row and no authorization decision that
+will ever branch on it, an `operator_id` column would be speculative
+schema for a feature this repo has explicitly decided not to build,
+not a fix for a documented gap. The arrows have been removed so the ERD
+matches the real schema; if a future session ever reopens multi-operator
+support, that is a new `operator_id` migration written against that real
+requirement, not this one.
 
 ## Invariants and where they are enforced
 
