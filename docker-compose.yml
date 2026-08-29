@@ -56,6 +56,13 @@ services:
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgres://pulsewatch:pulsewatch@postgres:5432/pulsewatch?sslmode=disable}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      # ADR-0004: worker-pool size, tick interval, and hard-shutdown deadline
+      # are process-startup configuration, not hardcoded constants. Values
+      # below match the ADR's own reasoned defaults.
+      SCHEDULER_WORKER_POOL_SIZE: ${SCHEDULER_WORKER_POOL_SIZE:-20}
+      SCHEDULER_TICK_INTERVAL: ${SCHEDULER_TICK_INTERVAL:-1s}
+      SCHEDULER_LEASE_SAFETY_MARGIN: ${SCHEDULER_LEASE_SAFETY_MARGIN:-5s}
+      SCHEDULER_HARD_SHUTDOWN_DEADLINE: ${SCHEDULER_HARD_SHUTDOWN_DEADLINE:-30s}
     ports:
       - "8020:8080"
     depends_on:

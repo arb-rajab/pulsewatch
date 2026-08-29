@@ -44,14 +44,26 @@ jobs:
           version: v2.13.2
           working-directory: backend
 
+      - name: Install migrate CLI
+        run: go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@v4.19.1
+
+      # Session 5's scheduler tests run against a real Postgres (the
+      # concurrency/restart-recovery/shutdown proofs this session requires
+      # need the actual schema, not a mock) — migrations must apply before
+      # `go test`, not only in the later up/down/up reversibility check
+      # below.
+      - name: Apply migrations before tests
+        env:
+          DATABASE_URL: postgres://pulsewatch:pulsewatch@localhost:5432/pulsewatch?sslmode=disable
+        run: migrate -path=./migrations -database="$DATABASE_URL" up
+
       - name: go test
+        env:
+          DATABASE_URL: postgres://pulsewatch:pulsewatch@localhost:5432/pulsewatch?sslmode=disable
         run: go test ./... -race -v
 
       - name: govulncheck
         run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
-
-      - name: Install migrate CLI
-        run: go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@v4.19.1
 
       - name: Run migrations against a fresh Postgres, verify down reverses cleanly, re-apply up
         env:
