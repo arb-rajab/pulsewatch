@@ -1,0 +1,897 @@
+openapi: 3.1.0
+info:
+  title: pulsewatch API
+  version: 0.1.0-draft
+  description: >
+    Design-time contract, written as the API-contracts pass between
+    Architecture (Session 3) and Implementation (Session 4) — no
+    implementation exists yet. Two authenticated surfaces share this
+    document: an operator-facing REST API (session-cookie auth) and an
+    agent-facing surface (bearer-token auth) consisting of a REST
+    assignment-poll endpoint plus an OTLP/HTTP log-ingestion endpoint.
+    See `docs/project-memory/05-api-contracts.md` for the prose rationale
+    this spec is the structural half of.
+  license:
+    name: AGPL-3.0
+    url: https://www.gnu.org/licenses/agpl-3.0.html
+servers:
+  - url: /api/v1
+    description: Operator- and agent-facing REST surface.
+tags:
+  - name: auth
+    description: Operator session login/logout.
+  - name: targets
+    description: Check registration and configuration — FR-001–FR-004, US-001, US-002.
+  - name: status
+    description: Live target state and rolling-window SLO — US-004, US-009, ADR-0002, ADR-0003.
+  - name: alert-channels
+    description: Alert-channel configuration with write-once credential handling — FR-023.
+  - name: agents
+    description: Agent registration and credential lifecycle — ADR-0003, roles matrix.
+  - name: agent-surface
+    description: Endpoints called by the agent itself, bearer-token authenticated — ADR-0003.
+
+paths:
+  /auth/login:
+    post:
+      operationId: login
+      tags: [auth]
+      summary: Operator login
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string, format: password }
+      responses:
+        '200':
+          description: >
+            Session established. The session cookie is a stateless,
+            server-HMAC-signed token (operator_id + expiry) — no
+            server-side session store, no dependency on Redis for auth.
+          headers:
+            Set-Cookie:
+              schema: { type: string, example: "pulsewatch_session=<signed-token>; HttpOnly; Secure; SameSite=Strict" }
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  operator_id: { type: string, format: uuid }
+                  email: { type: string, format: email }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /auth/logout:
+    post:
+      operationId: logout
+      tags: [auth]
+      summary: Operator logout
+      security: [{ operatorSession: [] }]
+      responses:
+        '204':
+          description: >
+            Cookie cleared client-side. Because the session token is
+            stateless (no server-side store), logout cannot revoke a
+            copy of the token an attacker already captured — only
+            rotating the server's signing secret does that (an
+            operational action, not a per-session one). Acceptable for
+            v1's single-operator, self-hosted threat model.
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /targets:
+    post:
+      operationId: createTarget
+      tags: [targets]
+      summary: Register a check (FR-001 HTTP, FR-002 TCP)
+      security: [{ operatorSession: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TargetCreateRequest' }
+      responses:
+        '201':
+          description: >
+            Target created in "awaiting first check" state (US-001) and
+            picked up by the scheduler within one tick (ADR-0004).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Target' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    get:
+      operationId: listTargets
+      tags: [targets]
+      summary: List registered targets
+      description: >
+        Unpaginated — bounded, single-operator scale (~5–10 targets today,
+        NFR-003's own ≤100-target ceiling), mirroring the same reasoning
+        `lexicon`'s API contract applies to its own small, bounded list
+        endpoints.
+      security: [{ operatorSession: [] }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Target' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /targets/{target_id}:
+    parameters:
+      - $ref: '#/components/parameters/TargetId'
+    get:
+      operationId: getTarget
+      tags: [targets]
+      summary: Get target configuration
+      security: [{ operatorSession: [] }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Target' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      operationId: updateTarget
+      tags: [targets]
+      summary: Update mutable check configuration
+      description: >
+        Only interval, failure threshold, timeout, body-match pattern, and
+        agent assignment are mutable. `type`/`url`/`host`/`port` define a
+        target's identity and are immutable after creation — changing what
+        is being monitored is a delete-and-recreate, not an in-place edit,
+        so a target's history (`check_results`, `incidents`) never silently
+        spans two different monitored things under one ID.
+      security: [{ operatorSession: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TargetUpdateRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Target' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+    delete:
+      operationId: deleteTarget
+      tags: [targets]
+      summary: Delete a target (soft delete)
+      security: [{ operatorSession: [] }]
+      responses:
+        '204': { description: Deleted. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /targets/{target_id}/status:
+    parameters:
+      - $ref: '#/components/parameters/TargetId'
+    get:
+      operationId: getTargetStatus
+      tags: [status]
+      summary: Live target status
+      description: >
+        Surfaces ADR-0002's three alerting states plus the ADR-0003
+        agent-staleness overlay, computed at read time — never a value
+        written into `target_schedule.state` itself (ADR-0002
+        Consequences). This is the only place a target can show
+        `"unknown"` live; a server-outage "unknown" (FR-011) is inherently
+        retrospective (the API can't be queried while the server is down)
+        and only ever shows up in the rolling-window SLO endpoint below,
+        not here.
+      security: [{ operatorSession: [] }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TargetStatus' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /targets/{target_id}/slo:
+    parameters:
+      - $ref: '#/components/parameters/TargetId'
+    get:
+      operationId: getTargetSlo
+      tags: [status]
+      summary: Rolling-window SLO / error-budget (US-004, FR-010, NFR-009)
+      description: >
+        Computed exclusively from `check_rollups_hourly` (FR-010) — never
+        a raw-row scan. `slo_target_pct` is a request-time parameter, not
+        stored configuration: `04-data-model.md` has no persisted
+        per-target SLO-target column, and this contract deliberately
+        doesn't add one — an error budget is a lens applied over existing
+        rollup data at read time, not a new piece of state Session 3
+        didn't design for.
+      security: [{ operatorSession: [] }]
+      parameters:
+        - name: window_days
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 400, default: 30 }
+        - name: slo_target_pct
+          in: query
+          required: false
+          schema: { type: number, format: double, minimum: 0, maximum: 100, default: 99.9 }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TargetSlo' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /targets/{target_id}/incidents:
+    parameters:
+      - $ref: '#/components/parameters/TargetId'
+    get:
+      operationId: listTargetIncidents
+      tags: [status]
+      summary: Incident history (US-009, FR-022)
+      description: >
+        Unpaginated in v1 — incident volume is bounded by real-outage
+        frequency, not request volume, unlike `lexicon`'s query-log
+        endpoint. Revisit if a target's incident count ever grows large
+        enough to matter in practice.
+      security: [{ operatorSession: [] }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Incident' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /alert-channels:
+    post:
+      operationId: createAlertChannel
+      tags: [alert-channels]
+      summary: Configure an alert channel (FR-013/FR-014)
+      description: >
+        `destination` (webhook URL incl. any embedded bearer token, or
+        email/SMS provider credentials) is accepted here and nowhere else
+        readable again — see the `AlertChannel` response schema, which has
+        no property capable of carrying it back.
+      security: [{ operatorSession: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AlertChannelCreateRequest' }
+      responses:
+        '201':
+          description: Created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AlertChannel' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+    get:
+      operationId: listAlertChannels
+      tags: [alert-channels]
+      summary: List alert channels
+      security: [{ operatorSession: [] }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/AlertChannel' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /alert-channels/{alert_channel_id}:
+    parameters:
+      - $ref: '#/components/parameters/AlertChannelId'
+    get:
+      operationId: getAlertChannel
+      tags: [alert-channels]
+      summary: Get alert channel (never returns the destination/credential)
+      security: [{ operatorSession: [] }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AlertChannel' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      operationId: deleteAlertChannel
+      tags: [alert-channels]
+      summary: Delete an alert channel
+      security: [{ operatorSession: [] }]
+      responses:
+        '204': { description: Deleted. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /alert-channels/{alert_channel_id}/secret:
+    parameters:
+      - $ref: '#/components/parameters/AlertChannelId'
+    put:
+      operationId: rotateAlertChannelSecret
+      tags: [alert-channels]
+      summary: Replace the channel's destination/credential (write-only)
+      description: >
+        The only way to change a channel's credential. There is
+        deliberately no corresponding GET — this operation's response has
+        no body at all, so there is structurally no response shape that
+        could ever carry the value back, matching FR-023's "never
+        returned in plaintext after initial creation" as a property of the
+        API's shape, not of handler discipline.
+      security: [{ operatorSession: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AlertChannelSecretRotateRequest' }
+      responses:
+        '204': { description: Replaced. No response body — see summary. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /agents:
+    post:
+      operationId: createAgent
+      tags: [agents]
+      summary: Register an agent (ADR-0003)
+      description: >
+        Returns the agent's bearer credential in plaintext exactly once,
+        in this response only (`AgentCreated`) — no GET endpoint uses a
+        schema with a credential/token property. If this response is lost
+        in transit, retry with the same `Idempotency-Key`: the cached
+        original response (including the plaintext token) is replayed for
+        the idempotency window, rather than silently minting a second
+        agent record. After that window, the token is unrecoverable, same
+        as an alert-channel destination.
+      security: [{ operatorSession: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AgentCreateRequest' }
+      responses:
+        '201':
+          description: Created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AgentCreated' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+    get:
+      operationId: listAgents
+      tags: [agents]
+      summary: List agents and their registration/liveness status
+      security: [{ operatorSession: [] }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Agent' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /agents/{agent_id}:
+    parameters:
+      - $ref: '#/components/parameters/AgentId'
+    get:
+      operationId: getAgent
+      tags: [agents]
+      summary: Get agent registration/liveness status
+      security: [{ operatorSession: [] }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Agent' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      operationId: deleteAgent
+      tags: [agents]
+      summary: Decommission an agent
+      description: >
+        Blocked with `409` while the agent still has assigned targets.
+        Silently falling back those targets to server-executed would be
+        actively wrong for a target the server structurally cannot reach
+        (the entire reason the agent exists, per ADR-0003/`00b-build-vs-
+        alternatives.md`) — reassignment or deletion of its targets must
+        be an explicit prior operator action, not an implicit side effect
+        of decommissioning the agent.
+      security: [{ operatorSession: [] }]
+      responses:
+        '204': { description: Decommissioned. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Agent still has assigned targets.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /agents/{agent_id}/credential/rotate:
+    parameters:
+      - $ref: '#/components/parameters/AgentId'
+    post:
+      operationId: rotateAgentCredential
+      tags: [agents]
+      summary: Rotate an agent's credential
+      description: >
+        Intentionally **not** idempotency-key-guarded: a client that never
+        received the previous rotation's response never learned that
+        token, so a plain retry safely issuing a new one is harmless — the
+        one-time-shown token from an unacknowledged prior call is simply
+        never used by anything. Unlike agent *creation*, there is no
+        duplicate-resource risk here to guard against, only a duplicate
+        *credential-mint* — which costs nothing since only one credential
+        is ever active per agent (this call invalidates the previous one).
+      security: [{ operatorSession: [] }]
+      responses:
+        '200':
+          description: >
+            New credential, shown exactly once. The prior credential is
+            invalidated immediately.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AgentCredentialRotated' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /agent/assignments:
+    get:
+      operationId: getAgentAssignments
+      tags: [agent-surface]
+      summary: Poll the caller's own assignment list (ADR-0003 Decision 2)
+      description: >
+        The agent's identity comes from its bearer credential, not a path
+        parameter — there is no `{agent_id}` in this path, structurally
+        preventing one agent from ever addressing another's assignment
+        list (roles matrix: "read another agent's assignments" is
+        forbidden). The payload deliberately omits `failure_threshold`:
+        hysteresis evaluation is server-side only (ADR-0002) — the agent's
+        job is to execute and report outcomes, nothing more. This poll
+        does **not** update `agents.last_heartbeat_at` — heartbeat is
+        carried exclusively over the OTLP channel below (ADR-0003), kept
+        as the single mechanism staleness is computed from rather than two
+        independent liveness signals that could drift apart.
+      security: [{ agentToken: [] }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AssignmentList' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /v1/logs:
+    servers:
+      - url: /
+        description: >
+          Standard OTLP/HTTP receiver path — not versioned under
+          `/api/v1`, since this is the OTel Collector's exporter-pipeline
+          target (ADR-0003), not part of the operator-facing REST surface.
+    post:
+      operationId: ingestOtlpLogs
+      tags: [agent-surface]
+      summary: OTLP log ingestion — check results and heartbeats (ADR-0003)
+      description: >
+        The server's own ingestion endpoint, reached via the Collector's
+        exporter pipeline, not called by the agent directly. The
+        `Authorization` bearer header the agent attaches must be preserved
+        end-to-end by the Collector's pipeline config so the server can
+        authenticate the forwarded request with the same `agentToken`
+        scheme used by `/agent/assignments` (a Session-4 Collector-config
+        consequence, not decided here). Two record shapes share this one
+        endpoint, distinguished by the `pulsewatch.event_type` attribute:
+
+        - **`check_result`** — one log record per completed check. Carries
+          `pulsewatch.target_id`, `pulsewatch.outcome` (`success`|
+          `failure`), `pulsewatch.latency_ms`, `pulsewatch.status_code`
+          (nullable), `pulsewatch.failure_reason` (nullable). The record's
+          own `timeUnixNano` *is* `checked_at` — not duplicated into a
+          custom attribute — and doubles as this record's idempotency key
+          together with `pulsewatch.target_id`: a resubmission carrying
+          the identical `(target_id, timeUnixNano)` pair is a no-op — no
+          new `check_results` row, and critically, the ADR-0002 transition
+          function is **not re-evaluated** for it (the duplicate check
+          happens before the transition function runs, not after — a
+          streak increment is not reversible after the fact, so the
+          dedup check must gate entry to the transition function, not
+          just the final `INSERT`). This requires a uniqueness constraint
+          on `check_results (target_id, checked_at)` beyond what
+          `04-data-model.md` currently specifies as a plain index — flagged
+          as a required additive index for Session 4, not a redesign of
+          that document.
+        - **`heartbeat`** — no `target_id`; an agent with zero assigned
+          targets still emits these (ADR-0003). Updates
+          `agents.last_heartbeat_at` to `max(current, timeUnixNano)` —
+          monotonic against out-of-order delivery, never regresses on a
+          late-arriving older record.
+      security: [{ agentToken: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OtlpExportLogsServiceRequest' }
+      responses:
+        '200':
+          description: >
+            Accepted (OTLP `ExportLogsServiceResponse`, empty partial-success
+            on full acceptance).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  partialSuccess:
+                    type: object
+                    properties:
+                      rejectedLogRecords: { type: integer }
+                      errorMessage: { type: string }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+components:
+  securitySchemes:
+    operatorSession:
+      type: apiKey
+      in: cookie
+      name: pulsewatch_session
+      description: >
+        Stateless, server-HMAC-signed session token issued by
+        `/auth/login`. No server-side session store (no new Redis
+        dependency for auth) — v1 is single-operator, self-hosted;
+        revocation is by server-secret rotation, not per-session.
+    agentToken:
+      type: http
+      scheme: bearer
+      description: >
+        Opaque per-agent credential, checked against `agents.
+        credential_hash` (`04-data-model.md`). A distinct credential space
+        from `operatorSession` — a machine actor, never a human session,
+        mirroring `privacy-forge`'s separation of connector auth from
+        staff auth.
+
+  parameters:
+    TargetId:
+      name: target_id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    AlertChannelId:
+      name: alert_channel_id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    AgentId:
+      name: agent_id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: >
+        Client-generated UUID. A retried request with the same key and an
+        identical body returns the original cached response (same status,
+        same body) instead of creating a second resource — this is what
+        makes a retried check/agent/alert-channel registration safe under
+        network retry. The same key with a *different* body is a `409`
+        (key reuse conflict, not a resource conflict). Cached for 24h.
+      schema: { type: string, format: uuid }
+
+  responses:
+    Unauthorized:
+      description: Missing or invalid credential.
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    NotFound:
+      description: Resource not found (or not visible to the caller).
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    Conflict:
+      description: Idempotency-Key reuse with a different body, or a resource conflict.
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    ValidationError:
+      description: Well-formed request, semantically invalid (e.g. interval outside [10s, 24h]).
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    ServiceUnavailable:
+      description: >
+        Postgres unavailable — the server degrades to refusing writes
+        rather than doing something incorrect (`03-architecture.md`
+        Failure handling), surfaced here rather than hanging or a bare
+        `500`.
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string }
+            message: { type: string }
+            field: { type: [string, 'null'] }
+
+    TargetBase:
+      type: object
+      properties:
+        body_match_pattern: { type: [string, 'null'] }
+        interval_seconds: { type: integer, minimum: 10, maximum: 86400, description: "FR-003" }
+        failure_threshold: { type: integer, minimum: 1, default: 3, description: "NFR-011 default" }
+        timeout_seconds: { type: integer, minimum: 1 }
+        agent_id: { type: [string, 'null'], format: uuid, description: "null = server-executed" }
+
+    TargetCreateRequest:
+      type: object
+      required: [type, interval_seconds, failure_threshold, timeout_seconds]
+      properties:
+        type: { type: string, enum: [http, tcp] }
+        url: { type: string, format: uri }
+        host: { type: string }
+        port: { type: integer, minimum: 1, maximum: 65535 }
+        body_match_pattern: { type: [string, 'null'] }
+        interval_seconds: { type: integer, minimum: 10, maximum: 86400, description: "FR-003" }
+        failure_threshold: { type: integer, minimum: 1, default: 3, description: "NFR-011 default" }
+        timeout_seconds: { type: integer, minimum: 1 }
+        agent_id: { type: [string, 'null'], format: uuid, description: "null = server-executed" }
+      if:
+        properties: { type: { const: http } }
+      then:
+        properties: { url: { type: string, format: uri } }
+        required: [url]
+      else:
+        properties:
+          host: { type: string }
+          port: { type: integer, minimum: 1, maximum: 65535 }
+        required: [host, port]
+
+    TargetUpdateRequest:
+      allOf:
+        - $ref: '#/components/schemas/TargetBase'
+      description: All fields optional; only mutable configuration, not identity (see PATCH description).
+
+    Target:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        type: { type: string, enum: [http, tcp] }
+        url: { type: [string, 'null'] }
+        host: { type: [string, 'null'] }
+        port: { type: [integer, 'null'] }
+        body_match_pattern: { type: [string, 'null'] }
+        interval_seconds: { type: integer }
+        failure_threshold: { type: integer }
+        timeout_seconds: { type: integer }
+        agent_id: { type: [string, 'null'], format: uuid }
+        created_at: { type: string, format: date-time }
+
+    TargetStatus:
+      type: object
+      properties:
+        target_id: { type: string, format: uuid }
+        display_state:
+          type: string
+          enum: [healthy, suspect, alerting, unknown]
+          description: "if agent_id != null and agent_stale: 'unknown', else raw_state (ADR-0002/ADR-0003)"
+        raw_state:
+          type: string
+          enum: [healthy, suspect, alerting]
+          description: "target_schedule.state — never 'unknown' itself (ADR-0002)"
+        streak: { type: integer }
+        last_checked_at: { type: [string, 'null'], format: date-time }
+        next_due_at: { type: string, format: date-time }
+        agent_id: { type: [string, 'null'], format: uuid }
+        agent_stale:
+          type: [boolean, 'null']
+          description: "null when agent_id is null (server-executed target)"
+        open_incident:
+          type: [object, 'null']
+          properties:
+            id: { type: integer }
+            opened_at: { type: string, format: date-time }
+
+    TargetSlo:
+      type: object
+      properties:
+        target_id: { type: string, format: uuid }
+        window_days: { type: integer }
+        window_start:
+          type: string
+          format: date-time
+          description: "Clipped to whole completed hourly rollup buckets — may be up to ~1h narrower than the naive request window (US-004: no off-by-one-rollup-period error, never a partial in-progress hour)."
+        window_end: { type: string, format: date-time }
+        expected_checks: { type: integer }
+        success_count: { type: integer }
+        failure_count: { type: integer }
+        unknown_count: { type: integer, description: "FR-011/FR-019 carve-out, from check_rollups_hourly" }
+        uptime_pct: { type: number, format: double, description: "success / (success + failure); unknown excluded from both terms" }
+        slo_target_pct: { type: number, format: double, description: "echoes the request-time parameter used, not stored configuration" }
+        error_budget_consumed_pct:
+          type: number
+          format: double
+          description: "(100 - uptime_pct) / (100 - slo_target_pct) * 100; may exceed 100 (budget exhausted)"
+
+    Incident:
+      type: object
+      properties:
+        id: { type: integer }
+        target_id: { type: string, format: uuid }
+        opened_at: { type: string, format: date-time }
+        closed_at: { type: [string, 'null'], format: date-time }
+        status: { type: string, enum: [open, resolved] }
+
+    AlertChannelCreateRequest:
+      type: object
+      required: [type, destination]
+      properties:
+        type: { type: string, enum: [webhook, email] }
+        destination:
+          type: string
+          description: "Webhook URL (incl. any embedded bearer token) or email/SMS provider credentials. Write-only: accepted here, never returned by any endpoint (FR-023)."
+
+    AlertChannel:
+      type: object
+      description: "Deliberately has no destination/credential property at all — see /alert-channels POST description."
+      properties:
+        id: { type: string, format: uuid }
+        type: { type: string, enum: [webhook, email] }
+        created_at: { type: string, format: date-time }
+
+    AlertChannelSecretRotateRequest:
+      type: object
+      required: [destination]
+      properties:
+        destination: { type: string }
+
+    AgentCreateRequest:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string }
+        report_interval_seconds:
+          type: integer
+          minimum: 1
+          default: 60
+          description: "Implementation default per ADR-0003 Trade-offs — an operational tuning value, not a numeric requirement this contract invents."
+
+    Agent:
+      type: object
+      description: "No credential/token property — see AgentCreated/AgentCredentialRotated for the only schemas that ever carry one."
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        report_interval_seconds: { type: integer }
+        last_heartbeat_at: { type: [string, 'null'], format: date-time }
+        is_stale: { type: boolean, description: "now - last_heartbeat_at > 3 * report_interval_seconds (NFR-008)" }
+        assigned_target_count: { type: integer }
+        registered_at: { type: string, format: date-time }
+
+    AgentCreated:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        report_interval_seconds: { type: integer }
+        registered_at: { type: string, format: date-time }
+        token:
+          type: string
+          description: "Shown exactly once, in this response only. Not retrievable via any GET endpoint."
+
+    AgentCredentialRotated:
+      type: object
+      properties:
+        agent_id: { type: string, format: uuid }
+        token:
+          type: string
+          description: "Shown exactly once, in this response only."
+        rotated_at: { type: string, format: date-time }
+
+    AssignmentListItem:
+      type: object
+      description: "Deliberately omits failure_threshold — hysteresis evaluation is server-side only (ADR-0002)."
+      properties:
+        target_id: { type: string, format: uuid }
+        type: { type: string, enum: [http, tcp] }
+        url: { type: [string, 'null'] }
+        host: { type: [string, 'null'] }
+        port: { type: [integer, 'null'] }
+        body_match_pattern: { type: [string, 'null'] }
+        interval_seconds: { type: integer }
+        timeout_seconds: { type: integer }
+
+    AssignmentList:
+      type: object
+      properties:
+        agent_id: { type: string, format: uuid }
+        assignments:
+          type: array
+          items: { $ref: '#/components/schemas/AssignmentListItem' }
+        poll_interval_seconds:
+          type: integer
+          description: "Hint for the agent's next poll — an implementation default, not a numeric requirement."
+
+    OtlpExportLogsServiceRequest:
+      type: object
+      description: >
+        Simplified OTLP/HTTP+JSON ExportLogsServiceRequest shape — real
+        attribute values are typed key/value pairs per the OTel Common
+        proto; the required `pulsewatch.*` attribute keys are documented
+        in this path's operation description, not re-derived from the
+        full OTel Collector proto-JSON schema here.
+      properties:
+        resourceLogs:
+          type: array
+          items:
+            type: object
+            properties:
+              resource:
+                type: object
+                properties:
+                  attributes:
+                    type: array
+                    description: "Must include agent.id (uuid)."
+                    items: { $ref: '#/components/schemas/OtlpKeyValue' }
+              scopeLogs:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    logRecords:
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          timeUnixNano: { type: string }
+                          attributes:
+                            type: array
+                            items: { $ref: '#/components/schemas/OtlpKeyValue' }
+
+    OtlpKeyValue:
+      type: object
+      properties:
+        key: { type: string }
+        value:
+          type: object
+          properties:
+            stringValue: { type: string }
+            intValue: { type: string }
+            boolValue: { type: boolean }
