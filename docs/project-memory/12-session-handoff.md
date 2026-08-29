@@ -55,9 +55,13 @@
 - `golangci-lint run` — initially found 2 real issues (unchecked `r.Run` error in `errcheck`; missing package comment in `revive`); both fixed, then re-verified clean.
 - `npm run build`, `npm test` (vitest), `npm run lint` (eslint) — all passed on the host (Node is installed locally).
 - `npm audit --omit=dev` — 0 vulnerabilities (the CI gate's exact command). Full `npm audit` (including dev deps) has 3 low-severity transitive findings from `@sveltejs/kit`'s own `cookie` dependency with no safe fix available yet; accepted for a Session-0 skeleton since the CI gate is clean.
-- `docker compose up --build` — all four services (postgres, redis, backend, frontend) reached a healthy state; backend `/health` and frontend `/health` both returned 200.
+- `docker compose up --build` — all four services (postgres, redis, backend, frontend) reached a healthy state; backend `/health` and frontend `/health` both returned real 200 responses over HTTP from the host (curl), not just container-internal health checks. Verified twice: once before the first commit, once again after the final CI fix (below) to confirm the updated `go.sum` still builds and boots clean. Port 3002 collided with an already-running `lexicon-prod-frontend-1` on this machine; moved the frontend to 3003 (documented in the decision log above).
 - `git status` immediately after the first commit — clean (verified, not assumed); `git status --ignored` confirmed `.claude/`, `node_modules/`, `.svelte-kit/`, and `build/` are correctly excluded.
-- Pushed to `origin/main` and confirmed the GitHub Actions CI run for the first commit is green.
+- Pushed to `origin/main`. CI was **not** green on the first push — three follow-up fix commits were needed, each verified by watching the actual GitHub Actions run (`gh run watch`) rather than assuming:
+  1. `golangci-lint-action@v6` with `version: latest` resolved to golangci-lint v1.64.8 (built with Go 1.24), which refuses to lint a `go 1.25.0` module. Pinned `version: v2.13.2`.
+  2. That pin then failed outright: `golangci-lint-action@v6` doesn't support golangci-lint v2 at all ("you must update to golangci-lint-action v7"). Bumped the action itself to `@v9` (latest major, verified to exist via the GitHub API before pushing).
+  3. `govulncheck` then caught a **real** vulnerability: `quic-go` v0.59.0 (pulled in transitively by Gin's HTTP/3 support) has GO-2026-5676, an HTTP/3 QPACK memory-exhaustion DoS, reachable through `gin.Engine.Run`. Fixed in v0.59.1 — bumped via `go get` + `go mod tidy`, re-verified `govulncheck` reports 0 vulnerabilities.
+  - Final state, confirmed via the GitHub Checks API (`gh api repos/.../commits/main/check-runs`), not just the watch output: all 5 checks (`Backend`, `Frontend`, `CodeQL (go)`, `CodeQL (javascript-typescript)`, `Secret scanning`) show `completed success` on the current `main` HEAD.
 
 ## Open questions and risks
 - **Open question:** how much of the alerting/SLO surface ships in v1 vs. backlog — needs a decision in Session 1 alongside the failure-cost analysis that will size the MVP boundary.
