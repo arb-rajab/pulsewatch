@@ -29,13 +29,17 @@ defaulting into "another CRUD app with a health-check feature."
 
 ## Problem statement
 
-This developer runs several self-hosted flagship repositories
-(`privacy-forge`, `laravel-consent-guard`, `bookslot`, `lexicon`) with live
-or demo deployments, plus whatever personal infrastructure sits alongside
-them. Nobody is watching a dashboard for these all day. The actual, current
-problem is: **if one of those deployments goes down — a demo instance dies,
-a database container doesn't come back after a host reboot, a cert expires
-— there is currently no honest, continuously running answer to "is it
+This developer maintains several self-hosted flagship repositories
+(`privacy-forge`, `laravel-consent-guard`, `bookslot`, `lexicon`), plus
+whatever personal infrastructure sits alongside them and pulsewatch's own
+future instance — see "Why this is real dogfooding" below for the honest,
+current state of which of those actually have anything live to monitor
+today (short answer: none of the other four do yet). Nobody is watching a
+dashboard for the infrastructure that does run. The actual, current problem
+is general to any of this developer's self-hosted services, present or
+future: **if a monitored deployment goes down — a demo instance dies, a
+database container doesn't come back after a host reboot, a cert expires —
+there is currently no honest, continuously running answer to "is it
 actually up right now," and no mechanism that tells this developer the
 moment it isn't.**
 
@@ -70,22 +74,57 @@ specific, nameable reason, not a vague "it's not good enough":
   correctly not alert on that blip" — that a much smaller, purpose-fit
   system can answer just as well at this scale.
 
-## Why this is real dogfooding, not a hypothetical persona
+## Why this is real dogfooding, not a hypothetical persona — and what's actually monitorable today
 
 Unlike `bookslot`'s tattoo-studio framing, which was necessarily
 hypothetical (this developer does not run a tattoo studio), pulsewatch's
-primary use case is not invented for the sake of having a persona. **The
-primary user is this developer, and the infrastructure being monitored is
-this developer's own**: the live/demo deployments of `privacy-forge`,
-`laravel-consent-guard`, `bookslot`, and `lexicon`, plus pulsewatch's own
-server monitoring itself. This is a bounded, currently-existing set of
-services, not a projection of what some imagined third party might want.
-That has a direct, practical consequence for this brief: the requirements
-below aren't sized against a market segment, they're sized against what
-this developer's own deployments actually need — a handful of HTTP(S)
-health endpoints and a couple of TCP-reachable data stores, checked often
-enough to catch a real outage before a portfolio reviewer clicks a dead
-demo link, not thousands of targets across many tenants.
+primary use case is not invented for the sake of having a persona: **the
+primary user is this developer**, not a projection of what some imagined
+third party might want. That much is not in tension with anything else in
+this portfolio.
+
+Where the framing needs to be precise, not just directionally honest, is
+*what infrastructure actually exists to monitor right now*. Checked against
+each named repository's own recorded decisions, as of this writing:
+
+- **`privacy-forge`** — a public hosted demo instance was Session 1's
+  original plan, but Session 24 explicitly descoped real infrastructure
+  spend and reverted to a local/simulated deployment only (`privacy-forge`'s
+  own `09-decision-log.md`, "Demo/hosting decision revised"); its own
+  deployment doc describes it as "a single-operator, not-currently-
+  hosted-anywhere" system.
+- **`lexicon`** — proven only against a local Docker Compose stack; no
+  cloud host has ever been provisioned (`lexicon`'s
+  `08-deployment-and-operations.md`: "no such deployment exists"), the same
+  no-real-infrastructure-spend precedent its `ADR-0004` records for the LLM
+  credential decision.
+- **`bookslot`** — the MVP build phase was formally closed at a local-only
+  checkpoint (D-0045, `booking-and-deposits`'s `09-decision-log.md`); there
+  was never a real pilot deployment running, let alone one still up.
+- **`laravel-consent-guard`** — a Composer package, not a hosted service:
+  its own README states it "is never deployed anywhere as a running
+  service." There is no uptime concept to check it against at all.
+
+**None of the other four flagships currently has a real, live,
+continuously-running deployment for pulsewatch to point a check at.** What
+*is* actually monitorable today is narrower: pulsewatch's own instance
+(its health/liveness endpoints, its own scheduler process) and, if this
+developer stands one up for the purpose, a local docker-compose stack.
+Monitoring the other flagships' live deployments is **real, intended, and
+still the reason this brief is sized the way it is — but it is aspirational
+until each of those repos makes its own future infrastructure decision to
+actually run something live**, not a currently-existing set of services
+this brief should imply is already waiting to be checked. That is each of
+those repos' call to make, not something pulsewatch's own brief should
+assume into existence by describing it in the present tense.
+
+This still has a direct, practical consequence for this brief: the
+requirements below aren't sized against a market segment, they're sized
+against what this developer's real infrastructure needs *whenever it
+exists* — a handful of HTTP(S) health endpoints and a couple of
+TCP-reachable data stores, not thousands of targets across many tenants —
+and pulsewatch is built to dogfood that the moment any of it is live,
+starting with itself.
 
 ## Target users and stakeholders
 
@@ -102,10 +141,13 @@ demo link, not thousands of targets across many tenants.
   dashboard first. This is a different *mode* of use (interrupt-driven,
   away from a screen), not a different *user*.
 - **Indirect beneficiary, not a user of pulsewatch itself:** anyone
-  evaluating this portfolio who clicks through to a live demo. pulsewatch
-  being correct is part of why those demos stay up; that's a motivation for
-  building this honestly, not a stakeholder pulsewatch needs to serve
-  directly (they never see pulsewatch's UI).
+  evaluating this portfolio who clicks through to a live demo, *once any of
+  this portfolio's other flagships actually has one running* — see "Why
+  this is real dogfooding" above for why that's not the case today.
+  pulsewatch being correct is part of why those demos would stay up once
+  they exist; that's a motivation for building this honestly, not a
+  stakeholder pulsewatch needs to serve directly (they never see
+  pulsewatch's UI).
 
 ## Business assumptions
 

@@ -6,10 +6,16 @@
 
 ## MVP boundary (in scope)
 
-Sized against this developer's actual target set (~5–10 self-hosted
-services — the other flagships' live/demo deployments plus pulsewatch
-itself), per `00-project-brief.md`. A reviewer should be able to check each
-item off directly:
+Sized against the target set this developer's infrastructure will have once
+it exists (~5–10 self-hosted services in shape — the other flagships'
+eventual live/demo deployments plus pulsewatch's own instance), per
+`00-project-brief.md`. As of this writing, the only real target is
+pulsewatch itself — see that brief's "Why this is real dogfooding, not a
+hypothetical persona — and what's actually monitorable today" section for
+why none of the other four flagships currently has a live deployment; this
+sizing describes the shape of the eventual target set, not four services
+already waiting to be checked. A reviewer should be able to check each item
+off directly:
 
 - [ ] HTTP(S) check type — request a configured URL, evaluate status code
       and (optionally) response-body match, record latency.
@@ -84,8 +90,21 @@ All items in the MVP boundary checklist above are implemented **and**:
   real test scenarios (a stopped target, an injected transient blip, a
   server restart mid-incident, an elapsed retention window, a slow
   target) — not just implemented, verified.
-- pulsewatch has run continuously against at least the real live/demo
-  deployments of this portfolio's other flagships for a sustained period
-  (proposed: 2+ weeks) without manual intervention or a missed real
-  outage — the actual dogfooding proof this brief is built around, not a
-  demo run once and screenshotted.
+- pulsewatch has run continuously against its own real, currently-
+  monitorable targets (at minimum: its own health/liveness endpoints and
+  scheduler process, plus a local docker-compose stack if one is stood up
+  for this purpose) for a sustained period (proposed: 2+ weeks) without
+  manual intervention or a missed real outage — the actual dogfooding proof
+  this brief is built around, not a demo run once and screenshotted.
+- Extending that same proof to the other portfolio flagships' live/demo
+  deployments (`privacy-forge`, `laravel-consent-guard`, `bookslot`,
+  `lexicon`) is **explicitly aspirational and not required for v1-complete**,
+  because none of them currently has a real live deployment to monitor —
+  per each repo's own recorded decisions: `privacy-forge`'s Session 24
+  real-infrastructure-spend descoping, `lexicon`'s local-only deployment
+  proof, `bookslot`'s D-0045 local-only MVP checkpoint, and
+  `laravel-consent-guard` being a package never deployed as a running
+  service at all. If and when any of those repos' own future sessions
+  stand up a real live deployment, extending pulsewatch's dogfooding to it
+  is a natural, low-effort follow-on — but v1-complete must not be gated on
+  infrastructure decisions this repository doesn't own.
