@@ -1,5 +1,7 @@
 // Package scheduler implements ADR-0001's Postgres row-leasing claim/release
-// mechanism running on ADR-0004's bounded worker pool.
+// mechanism running on ADR-0004's bounded worker pool, evaluating
+// ADR-0002's alert-suppression state machine and dispatching notifications
+// (via internal/alerting) after every release.
 package scheduler
 
 import (

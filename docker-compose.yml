@@ -63,6 +63,13 @@ services:
       SCHEDULER_TICK_INTERVAL: ${SCHEDULER_TICK_INTERVAL:-1s}
       SCHEDULER_LEASE_SAFETY_MARGIN: ${SCHEDULER_LEASE_SAFETY_MARGIN:-5s}
       SCHEDULER_HARD_SHUTDOWN_DEADLINE: ${SCHEDULER_HARD_SHUTDOWN_DEADLINE:-30s}
+      # FR-023: AES-256 key (base64, 32 decoded bytes) used to decrypt
+      # alert_channels.destination_encrypted for dispatch. Empty by default —
+      # no channel-registration API exists yet to create a row this would
+      # ever need to decrypt (12-session-handoff.md); the scheduler degrades
+      # gracefully (logs a warning, skips dispatch) rather than failing to
+      # start when it's unset.
+      ALERT_CHANNEL_ENCRYPTION_KEY: ${ALERT_CHANNEL_ENCRYPTION_KEY:-}
     ports:
       - "8020:8080"
     depends_on:

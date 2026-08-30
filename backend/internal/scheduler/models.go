@@ -14,6 +14,10 @@ type CheckJob struct {
 	BodyMatchPattern *string
 	TimeoutSeconds   int
 	IntervalSeconds  int
+	// FailureThreshold is targets.failure_threshold (NFR-011, default 3) —
+	// ADR-0002's Evaluate needs it fresh per job since it's a per-target
+	// operator-configured value, not a scheduler-wide constant.
+	FailureThreshold int
 }
 
 // checkOutcome is the result of actually executing a claimed check — the
