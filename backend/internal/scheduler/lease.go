@@ -70,37 +70,32 @@ func releaseAndRecord(ctx context.Context, pool *pgxpool.Pool, job CheckJob, che
 	}
 	defer func() { _ = tx.Rollback(ctx) }() // no-op once committed
 
-	const insertResult = `
-INSERT INTO check_results
-    (target_id, checked_at, success, latency_ms, status_code, failure_reason, body_match_fragment, body_match_fragment_truncated)
-VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8)`
-
-	if _, execErr := tx.Exec(ctx, insertResult,
-		job.TargetID, checkedAt, outcome.success, outcome.latency.Milliseconds(),
-		outcome.statusCode, outcome.failureReason, outcome.bodyMatchFragment, outcome.bodyMatchFragmentTruncated,
-	); execErr != nil {
-		return nil, fmt.Errorf("insert check_results for target %s: %w", job.TargetID, execErr)
+	// The shared write path every check-result source goes through
+	// (alerting.RecordCheckResult) — the identical insert/evaluate/apply
+	// sequence an agent-reported OTLP result now also uses (internal/agentapi),
+	// so this session's ADR-0003 work adds no second, lower-rigor path for
+	// agent-sourced data (03-architecture.md).
+	recorded, recordErr := alerting.RecordCheckResult(ctx, tx, alerting.CheckResultInput{
+		TargetID:                   job.TargetID,
+		CheckedAt:                  checkedAt,
+		Success:                    outcome.success,
+		LatencyMS:                  int(outcome.latency.Milliseconds()),
+		StatusCode:                 outcome.statusCode,
+		FailureReason:              outcome.failureReason,
+		BodyMatchFragment:          outcome.bodyMatchFragment,
+		BodyMatchFragmentTruncated: outcome.bodyMatchFragmentTruncated,
+	}, job.FailureThreshold)
+	if recordErr != nil {
+		return nil, fmt.Errorf("record check result for target %s: %w", job.TargetID, recordErr)
 	}
 
-	// FOR UPDATE: this row is already exclusively ours per ADR-0001's lease
-	// (only the current owner ever writes target_schedule for this target),
-	// so this never contends — it's cheap insurance that the transition
-	// below is always computed from the value this same transaction is
-	// about to overwrite, not a stale read.
-	var previousStreak int
-	var previousStateRaw string
-	const selectSchedule = `SELECT streak, state FROM target_schedule WHERE target_id = $1::uuid FOR UPDATE`
-	if scanErr := tx.QueryRow(ctx, selectSchedule, job.TargetID).Scan(&previousStreak, &previousStateRaw); scanErr != nil {
-		return nil, fmt.Errorf("read target_schedule streak/state for target %s: %w", job.TargetID, scanErr)
-	}
-
-	transition := alerting.Evaluate(previousStreak, alerting.State(previousStateRaw), outcome.success, job.FailureThreshold)
-
-	dispatchReq, applyErr := alerting.ApplyIncidentAction(ctx, tx, job.TargetID, transition.Action)
-	if applyErr != nil {
-		return nil, fmt.Errorf("apply incident action for target %s: %w", job.TargetID, applyErr)
-	}
-
+	// next_due_at/lease clearing are this path's own scheduling-specific
+	// columns (ADR-0001) — folded into the same commit as the shared write
+	// above, exactly as ADR-0002 requires ("the same transaction"). Persists
+	// recorded.Streak/State regardless of recorded.Inserted: a duplicate
+	// (target_id, checked_at) still needs its lease released and next_due_at
+	// advanced, just with streak/state passed through unchanged (which is
+	// exactly what RecordCheckResult already returns in that case).
 	const updateSchedule = `
 UPDATE target_schedule
 SET next_due_at = now() + ($1 * INTERVAL '1 second'),
@@ -111,12 +106,12 @@ SET next_due_at = now() + ($1 * INTERVAL '1 second'),
     state = $3
 WHERE target_id = $4::uuid`
 
-	if _, execErr := tx.Exec(ctx, updateSchedule, job.IntervalSeconds, transition.Streak, string(transition.State), job.TargetID); execErr != nil {
+	if _, execErr := tx.Exec(ctx, updateSchedule, job.IntervalSeconds, recorded.Streak, string(recorded.State), job.TargetID); execErr != nil {
 		return nil, fmt.Errorf("release lease for target %s: %w", job.TargetID, execErr)
 	}
 
 	if commitErr := tx.Commit(ctx); commitErr != nil {
 		return nil, fmt.Errorf("commit release transaction for target %s: %w", job.TargetID, commitErr)
 	}
-	return dispatchReq, nil
+	return recorded.Dispatch, nil
 }

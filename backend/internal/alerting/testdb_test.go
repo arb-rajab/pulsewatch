@@ -75,3 +75,52 @@ func countOpenIncidents(t *testing.T, pool *pgxpool.Pool, targetID string) int {
 	}
 	return count
 }
+
+// insertTestTargetWithSchedule creates a real target + target_schedule row
+// — RecordCheckResult reads/writes target_schedule.streak/state, which
+// insertTestTargetRow's bare targets-only fixture doesn't provide. Mirrors
+// scheduler.insertTestTarget's own shape, scoped to this package's own
+// recordresult_test.go.
+func insertTestTargetWithSchedule(t *testing.T, pool *pgxpool.Pool) string {
+	t.Helper()
+	targetID := insertTestTargetRow(t, pool)
+
+	_, err := pool.Exec(t.Context(), `
+INSERT INTO target_schedule (target_id, next_due_at)
+VALUES ($1::uuid, now())`, targetID)
+	if err != nil {
+		t.Fatalf("insert test target_schedule: %v", err)
+	}
+	return targetID
+}
+
+func fetchStreakState(t *testing.T, pool *pgxpool.Pool, targetID string) (streak int, state string) {
+	t.Helper()
+	if err := pool.QueryRow(t.Context(), `SELECT streak, state FROM target_schedule WHERE target_id = $1::uuid`, targetID).Scan(&streak, &state); err != nil {
+		t.Fatalf("fetch streak/state: %v", err)
+	}
+	return streak, state
+}
+
+// persistStreakState writes back the streak/state RecordCheckResult
+// computed — RecordCheckResult deliberately leaves this write to its
+// caller (see its own doc comment), so tests that call it directly (rather
+// than through scheduler.releaseAndRecord, which does this as part of its
+// own larger UPDATE) have to do it themselves to exercise a realistic
+// multi-call sequence.
+func persistStreakState(t *testing.T, pool *pgxpool.Pool, targetID string, streak int, state State) {
+	t.Helper()
+	_, err := pool.Exec(t.Context(), `UPDATE target_schedule SET streak = $1, state = $2 WHERE target_id = $3::uuid`, streak, string(state), targetID)
+	if err != nil {
+		t.Fatalf("persist streak/state: %v", err)
+	}
+}
+
+func countCheckResultsFor(t *testing.T, pool *pgxpool.Pool, targetID string) int {
+	t.Helper()
+	var count int
+	if err := pool.QueryRow(t.Context(), `SELECT count(*) FROM check_results WHERE target_id = $1::uuid`, targetID).Scan(&count); err != nil {
+		t.Fatalf("count check_results: %v", err)
+	}
+	return count
+}

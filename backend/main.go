@@ -15,12 +15,20 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/arb-rajab/pulsewatch/backend/internal/agentapi"
+	"github.com/arb-rajab/pulsewatch/backend/internal/alerting"
 	"github.com/arb-rajab/pulsewatch/backend/internal/scheduler"
 )
 
-func setupRouter() *gin.Engine {
+// setupRouter wires the health check plus ADR-0003's agent-facing surface
+// (GET /api/v1/agent/assignments, POST /v1/logs — internal/agentapi). pool
+// may be nil only for tests that exercise /health alone; any agentapi
+// route registered against a nil pool will fail if actually invoked, never
+// at registration time.
+func setupRouter(pool *pgxpool.Pool, dispatcher alerting.Dispatcher, channelKey []byte, logger *slog.Logger) *gin.Engine {
 	r := gin.Default()
 	r.GET("/health", healthHandler)
+	agentapi.RegisterRoutes(r, pool, dispatcher, channelKey, logger)
 	return r
 }
 
@@ -56,10 +64,23 @@ func run() error {
 		return fmt.Errorf("construct scheduler: %w", err)
 	}
 
+	// The agent-facing OTLP ingestion path (internal/agentapi) dispatches
+	// notifications through the identical alerting.Dispatcher/channel-key
+	// construction the scheduler builds for itself (alerting.NewLogDispatcher,
+	// alerting.EncryptionKeyFromEnv) — two independent, deterministic reads
+	// of the same environment, not a shared mutable dependency, so no
+	// coupling to the scheduler package is needed here.
+	dispatcher := alerting.NewLogDispatcher(slog.Default())
+	channelKey, keyErr := alerting.EncryptionKeyFromEnv()
+	if keyErr != nil {
+		slog.Warn("ALERT_CHANNEL_ENCRYPTION_KEY not configured; agent-reported alert dispatch will be skipped if any alert_channels row exists", "error", keyErr)
+		channelKey = nil
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	srv := &http.Server{Addr: ":8080", Handler: setupRouter()}
+	srv := &http.Server{Addr: ":8080", Handler: setupRouter(pool, dispatcher, channelKey, slog.Default())}
 
 	httpErrCh := make(chan error, 1)
 	go func() {

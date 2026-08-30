@@ -136,6 +136,31 @@ INSERT INTO alert_channels (type, destination_encrypted) VALUES ('webhook', $1) 
 // DEFAULT 3, NFR-011) must never reach Alerting and must never dispatch —
 // driven through the real Scheduler.Run tick/claim/execute/release cycle
 // Session 5 built, not the transition function in isolation.
+//
+// This file's waitForCondition calls poll with a 15s budget (widened from
+// Session 6's original 2s during Session 7's own verification): a direct
+// A/B rerun of this exact test against the unmodified Session 6 code,
+// interleaved with Session 7's own code, reproduced the identical
+// intermittent "condition not met" timeout on BOTH versions — confirming
+// this is a pre-existing polling-margin sensitivity, not a Session 7
+// regression. `docker stats` during this session's own verification run
+// showed the actual cause: this developer's shared Docker Desktop VM (a
+// 5.7GB-total-memory host) was concurrently running several unrelated,
+// heavy, already-started containers from this developer's other projects
+// (a Laravel app, MySQL, multiple Postgres/Redis/MinIO instances, one
+// container alone measured at 60% CPU) — real, external resource
+// contention this session's own tests have no way to avoid and no
+// business touching (ground rules: don't touch other projects). Even
+// running this package in complete isolation (no other pulsewatch package
+// concurrently) still measured one iteration at 12.9s under that load.
+// GitHub Actions' actual CI runner has no such contention (a dedicated,
+// single-tenant runner) — this widened budget is pure headroom for a
+// noisy local verification host, not evidence the underlying property is
+// actually slow. Widening it is a test-robustness fix below ADR-0002's
+// own level of specification (the ADR fixes the alert-suppression
+// semantics being proved, not this test file's polling interval), exactly
+// like Session 6's own "OpenIncident's nested transaction" fix was
+// implementation-level rather than a design change.
 func TestEndToEnd_BlipBelowThreshold_NoIncidentNoDispatch(t *testing.T) {
 	pool := testPool(t)
 	srv, failing := newToggleServer()
@@ -162,9 +187,9 @@ func TestEndToEnd_BlipBelowThreshold_NoIncidentNoDispatch(t *testing.T) {
 	runDone := make(chan error, 1)
 	go func() { runDone <- sched.Run(ctx) }()
 
-	waitForCondition(t, 2*time.Second, func() bool { return countCheckResults(t, pool, targetID) >= 1 })
+	waitForCondition(t, 15*time.Second, func() bool { return countCheckResults(t, pool, targetID) >= 1 })
 	forceDueNow(t, pool, targetID)
-	waitForCondition(t, 2*time.Second, func() bool { return countCheckResults(t, pool, targetID) >= 2 })
+	waitForCondition(t, 15*time.Second, func() bool { return countCheckResults(t, pool, targetID) >= 2 })
 
 	// Give any (incorrect) dispatch a moment to happen before asserting its absence.
 	time.Sleep(100 * time.Millisecond)
@@ -234,13 +259,13 @@ func TestEndToEnd_ThresholdCrossing_DispatchesOnce_ThenResolvesOnRecovery(t *tes
 	// Three consecutive failures: the third crosses the default threshold (3).
 	for i := 1; i <= 3; i++ {
 		want := i
-		waitForCondition(t, 2*time.Second, func() bool { return countCheckResults(t, pool, targetID) >= want })
+		waitForCondition(t, 15*time.Second, func() bool { return countCheckResults(t, pool, targetID) >= want })
 		if i < 3 {
 			forceDueNow(t, pool, targetID)
 		}
 	}
 
-	waitForCondition(t, 2*time.Second, func() bool {
+	waitForCondition(t, 15*time.Second, func() bool {
 		_, state := fetchAlertState(t, pool, targetID)
 		return state == "alerting"
 	})
@@ -251,11 +276,11 @@ func TestEndToEnd_ThresholdCrossing_DispatchesOnce_ThenResolvesOnRecovery(t *tes
 		t.Fatalf("expected exactly 1 open incident, got open=%d closed=%d", open, closed)
 	}
 
-	waitForCondition(t, 2*time.Second, func() bool { return len(spy.callsFor(channelID)) == 1 })
+	waitForCondition(t, 15*time.Second, func() bool { return len(spy.callsFor(channelID)) == 1 })
 	if kind := spy.callsFor(channelID)[0].Kind; kind != "opened" {
 		t.Fatalf("expected the one dispatch to be kind=opened, got %s", kind)
 	}
-	waitForCondition(t, 2*time.Second, func() bool {
+	waitForCondition(t, 15*time.Second, func() bool {
 		var confirmed bool
 		err := pool.QueryRow(t.Context(), `
 SELECT delivery_confirmed FROM alert_dispatches
@@ -267,9 +292,9 @@ WHERE alert_channel_id = $1::uuid AND kind = 'opened'`, channelID,
 	// Recovery: the target starts responding 200 again.
 	failing.Store(false)
 	forceDueNow(t, pool, targetID)
-	waitForCondition(t, 2*time.Second, func() bool { return countCheckResults(t, pool, targetID) >= 4 })
+	waitForCondition(t, 15*time.Second, func() bool { return countCheckResults(t, pool, targetID) >= 4 })
 
-	waitForCondition(t, 2*time.Second, func() bool {
+	waitForCondition(t, 15*time.Second, func() bool {
 		_, state := fetchAlertState(t, pool, targetID)
 		return state == "healthy"
 	})
@@ -280,11 +305,11 @@ WHERE alert_channel_id = $1::uuid AND kind = 'opened'`, channelID,
 		t.Fatalf("expected the incident closed (0 open, 1 closed), got open=%d closed=%d", open, closed)
 	}
 
-	waitForCondition(t, 2*time.Second, func() bool { return len(spy.callsFor(channelID)) == 2 })
+	waitForCondition(t, 15*time.Second, func() bool { return len(spy.callsFor(channelID)) == 2 })
 	if kind := spy.callsFor(channelID)[1].Kind; kind != "resolved" {
 		t.Fatalf("expected the second dispatch to be kind=resolved, got %s", kind)
 	}
-	waitForCondition(t, 2*time.Second, func() bool {
+	waitForCondition(t, 15*time.Second, func() bool {
 		var confirmed bool
 		err := pool.QueryRow(t.Context(), `
 SELECT delivery_confirmed FROM alert_dispatches
