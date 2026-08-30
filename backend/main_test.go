@@ -13,7 +13,7 @@ func TestHealthReturns200OK(t *testing.T) {
 	// /health doesn't touch Postgres or the agentapi routes, so a nil pool
 	// and nil dispatcher/key are safe here — they'd only matter if this
 	// test actually invoked an agentapi route.
-	router := setupRouter(nil, nil, nil, nil)
+	router := setupRouter(nil, nil, nil, nil, nil)
 
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, "/health", nil)

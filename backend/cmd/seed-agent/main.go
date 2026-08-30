@@ -1,29 +1,24 @@
-// Command seed-agent is this session's real agent-provisioning mechanism
-// (ADR-0003, 05-api-contracts.md's POST /api/v1/agents) exposed as a local
-// admin CLI rather than an HTTP endpoint.
+// Command seed-agent was Session 7's interim agent-provisioning mechanism,
+// built because docs/architecture/openapi.yaml's POST /api/v1/agents
+// requires operatorSession auth and no such mechanism existed yet in this
+// repo. Session 8 built that mechanism for real (internal/operatorauth,
+// internal/operatorapi) and POST /api/v1/agents is now a real, gated HTTP
+// handler (operatorapi.CreateAgent) calling the identical
+// agentauth.CreateAgent function this CLI always called — so this tool is
+// no longer a stopgap standing in for a missing endpoint.
 //
-// docs/architecture/openapi.yaml's POST /api/v1/agents requires
-// operatorSession auth — the stateless, server-HMAC-signed session cookie
-// 05-api-contracts.md's "Authentication and authorisation model" section
-// designs. That mechanism has no implementation in this repo yet: no
-// session store, no /auth/login handler, nothing to verify a cookie
-// against — the same class of gap Sessions 5/6 already flagged for
-// target/alert-channel registration ("no target- or channel-registration
-// REST API exists yet... because no handler implements
-// docs/architecture/openapi.yaml"). Building a full cookie-auth system
-// solely to gate one agent-creation endpoint would be scope well beyond
-// this session's own ADR-0003 focus, and shipping that endpoint
-// unauthenticated over HTTP in a public repo would be a real regression,
-// not a reasonable interim step — so this session provisions agents the
-// same way Sessions 5/6 provisioned targets and alert channels for their
-// own proofs: directly, not through a REST handler that doesn't exist yet.
-// The difference here is that a target/channel row is inert until a
-// scheduler tick or dispatch touches it, while an agent row's whole
-// purpose is to hold a live bearer credential — psql alone can't compute
-// this package's own HashToken digest, so this real, tested Go binary
-// exists to call agentauth.CreateAgent (the exact function real
-// provisioning logic will still call once an operator-authenticated HTTP
-// handler exists) rather than asking an operator to hand-roll a hash.
+// It is kept, deliberately, as a genuine break-glass provisioning path: it
+// needs only DATABASE_URL, never the backend HTTP server or an operator
+// session, so it still works when Postgres is reachable but the API
+// process itself is down, mid-incident, or not yet deployed — the same
+// operational role a framework's own DB-direct admin CLI plays relative to
+// its HTTP-authenticated admin UI. For every normal, day-to-day agent
+// registration, prefer the real HTTP path
+// (POST /api/v1/agents, operatorapi.CreateAgent) — it is exercised by real
+// integration tests the same way this CLI's own tests exercise
+// agentauth.CreateAgent directly, and going through it keeps agent
+// provisioning auditable via the same operator-session identity every
+// other operator action goes through.
 //
 // Usage:
 //

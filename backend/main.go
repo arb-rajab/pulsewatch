@@ -17,18 +17,23 @@ import (
 
 	"github.com/arb-rajab/pulsewatch/backend/internal/agentapi"
 	"github.com/arb-rajab/pulsewatch/backend/internal/alerting"
+	"github.com/arb-rajab/pulsewatch/backend/internal/operatorapi"
+	"github.com/arb-rajab/pulsewatch/backend/internal/operatorauth"
 	"github.com/arb-rajab/pulsewatch/backend/internal/scheduler"
 )
 
-// setupRouter wires the health check plus ADR-0003's agent-facing surface
-// (GET /api/v1/agent/assignments, POST /v1/logs — internal/agentapi). pool
-// may be nil only for tests that exercise /health alone; any agentapi
+// setupRouter wires the health check, ADR-0003's agent-facing surface (GET
+// /api/v1/agent/assignments, POST /v1/logs — internal/agentapi), and
+// 05-api-contracts.md's operator-facing REST surface (internal/operatorapi,
+// gated by RequireOperator's session cookie — Session 8). pool may be nil
+// only for tests that exercise /health alone; any agentapi/operatorapi
 // route registered against a nil pool will fail if actually invoked, never
 // at registration time.
-func setupRouter(pool *pgxpool.Pool, dispatcher alerting.Dispatcher, channelKey []byte, logger *slog.Logger) *gin.Engine {
+func setupRouter(pool *pgxpool.Pool, dispatcher alerting.Dispatcher, channelKey []byte, sessionSecret []byte, logger *slog.Logger) *gin.Engine {
 	r := gin.Default()
 	r.GET("/health", healthHandler)
 	agentapi.RegisterRoutes(r, pool, dispatcher, channelKey, logger)
+	operatorapi.RegisterRoutes(r, pool, sessionSecret, channelKey)
 	return r
 }
 
@@ -51,6 +56,11 @@ func run() error {
 	schedCfg, err := scheduler.ConfigFromEnv()
 	if err != nil {
 		return fmt.Errorf("scheduler config: %w", err)
+	}
+
+	sessionSecret, err := operatorauth.SigningSecretFromEnv()
+	if err != nil {
+		return fmt.Errorf("operator session config: %w", err)
 	}
 
 	pool, err := pgxpool.New(context.Background(), databaseURL)
@@ -80,7 +90,7 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	srv := &http.Server{Addr: ":8080", Handler: setupRouter(pool, dispatcher, channelKey, slog.Default())}
+	srv := &http.Server{Addr: ":8080", Handler: setupRouter(pool, dispatcher, channelKey, sessionSecret, slog.Default())}
 
 	httpErrCh := make(chan error, 1)
 	go func() {

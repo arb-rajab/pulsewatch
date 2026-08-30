@@ -70,6 +70,15 @@ services:
       # gracefully (logs a warning, skips dispatch) rather than failing to
       # start when it's unset.
       ALERT_CHANNEL_ENCRYPTION_KEY: ${ALERT_CHANNEL_ENCRYPTION_KEY:-}
+      # Session 8: real operator-session auth. Stateless HMAC signing key for
+      # the pulsewatch_session cookie (05-api-contracts.md) — base64,
+      # decoding to at least 32 bytes. Required, no default: unlike
+      # ALERT_CHANNEL_ENCRYPTION_KEY above, there is no graceful-degradation
+      # path for auth, so an unset/too-short value fails compose up loudly
+      # here rather than the backend silently starting with a weak or
+      # missing secret (main.go: operatorauth.SigningSecretFromEnv).
+      # Generate a real one with: openssl rand -base64 32
+      SESSION_SIGNING_SECRET: ${SESSION_SIGNING_SECRET:?SESSION_SIGNING_SECRET is required — generate one with: openssl rand -base64 32}
     ports:
       - "8020:8080"
     depends_on:
