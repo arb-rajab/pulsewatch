@@ -1,0 +1,42 @@
+# Real TLS termination for pulsewatch's operator-facing surface (R-001,
+# 08-deployment-and-operations.md). Terminates HTTPS for the browser-facing
+# frontend and, for direct API/curl use, the backend — neither is reachable
+# in plain HTTP from the host any more (see docker-compose.yml: `frontend`
+# no longer publishes a host port; `backend`'s own host port stays published
+# separately for the agent's REST/OTLP traffic, ADR-0003, untouched by this
+# change).
+#
+# `tls internal` issues a certificate from Caddy's own local CA (stored in
+# the `caddy_data` volume, so it's stable across restarts, not regenerated
+# every `docker compose up`) rather than a publicly trusted one — a real,
+# self-signed cert, not a placeholder. A real browser will show a
+# not-trusted warning for it; that is the accepted, named trade-off for the
+# self-hosted/local-default case documented in
+# 08-deployment-and-operations.md. Anyone exposing this deployment on a real
+# public domain should replace this file's `tls internal` with `tls {
+# operator@yourdomain }` (or just the site address as the domain) to get a
+# real Let's Encrypt certificate instead — see that doc for the full
+# instructions.
+{
+	auto_https disable_redirects
+}
+
+# Explicit hostnames, not a bare `:443` — Caddy's `tls internal` only
+# pre-provisions a certificate for names it's told to manage; a portless/
+# hostless address has no name to provision one for, and would refuse
+# every TLS handshake with "no certificate available" regardless of SNI.
+# `localhost`/`127.0.0.1` matches how this is actually reached (a browser
+# on the same host as `docker compose up`, per this project's dev/self-
+# hosted default — see 08-deployment-and-operations.md for the real-domain
+# alternative).
+localhost, 127.0.0.1 {
+	tls internal
+
+	handle /api/* {
+		reverse_proxy backend:8080
+	}
+
+	handle {
+		reverse_proxy frontend:3000
+	}
+}

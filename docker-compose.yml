@@ -78,7 +78,7 @@ services:
       # here rather than the backend silently starting with a weak or
       # missing secret (main.go: operatorauth.SigningSecretFromEnv).
       # Generate a real one with: openssl rand -base64 32
-      SESSION_SIGNING_SECRET: ${SESSION_SIGNING_SECRET:?SESSION_SIGNING_SECRET is required — generate one with: openssl rand -base64 32}
+      SESSION_SIGNING_SECRET: "${SESSION_SIGNING_SECRET:?SESSION_SIGNING_SECRET is required — generate one with: openssl rand -base64 32}"
     ports:
       - "8020:8080"
     depends_on:
@@ -98,9 +98,13 @@ services:
     build: ./frontend
     restart: unless-stopped
     environment:
-      PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:8020}
-    ports:
-      - "3003:3000"
+      PUBLIC_API_URL: ${PUBLIC_API_URL:-http://backend:8080}
+    # No host port published: the browser reaches this only through the
+    # `proxy` service's real HTTPS termination below (R-001,
+    # 08-deployment-and-operations.md) — a plain-HTTP path to the same
+    # login/dashboard flow would defeat the whole point of adding it.
+    expose:
+      - "3000"
     depends_on:
       - backend
     healthcheck:
@@ -109,5 +113,26 @@ services:
       timeout: 5s
       retries: 10
 
+  # Real, persistent TLS termination for the operator-facing dashboard/login
+  # flow (R-001, 08-deployment-and-operations.md) — replaces Session 9's
+  # temporary, torn-down self-signed harness. See ./Caddyfile for the
+  # routing/cert details and 08-deployment-and-operations.md for the full
+  # cert-choice writeup (self-signed by default; real-domain instructions
+  # included).
+  proxy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    ports:
+      - "8443:443"
+    depends_on:
+      - backend
+      - frontend
+
 volumes:
   postgres_data:
+  caddy_data:
+  caddy_config:
