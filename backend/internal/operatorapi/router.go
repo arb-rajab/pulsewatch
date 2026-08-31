@@ -31,6 +31,7 @@ func RegisterRoutes(r *gin.Engine, pool *pgxpool.Pool, sessionSecret []byte, cha
 	api.GET("/targets/:target_id", auth, GetTarget(pool))
 	api.PATCH("/targets/:target_id", auth, csrf, UpdateTarget(pool))
 	api.DELETE("/targets/:target_id", auth, DeleteTarget(pool))
+	api.GET("/targets/:target_id/status", auth, GetTargetStatus(pool))
 
 	api.POST("/alert-channels", auth, csrf, CreateAlertChannel(pool, channelKey))
 	api.GET("/alert-channels", auth, ListAlertChannels(pool))

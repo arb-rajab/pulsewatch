@@ -1,6 +1,6 @@
 <script lang="ts">
-	const status = 'Session 0 — governance and skeleton only. No monitoring UI yet.';
+	import { resolve } from '$app/paths';
 </script>
 
 <h1>pulsewatch</h1>
-<p>{status}</p>
+<p><a href={resolve('/login')}>Log in</a> to view the dashboard.</p>
