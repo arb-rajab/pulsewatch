@@ -22,15 +22,15 @@ type openIncidentResponse struct {
 
 // targetStatusResponse mirrors openapi.yaml's TargetStatus schema verbatim.
 type targetStatusResponse struct {
-	TargetID      string                 `json:"target_id"`
-	DisplayState  string                 `json:"display_state"`
-	RawState      string                 `json:"raw_state"`
-	Streak        int                    `json:"streak"`
-	LastCheckedAt *time.Time             `json:"last_checked_at"`
-	NextDueAt     time.Time              `json:"next_due_at"`
-	AgentID       *string                `json:"agent_id"`
-	AgentStale    *bool                  `json:"agent_stale"`
-	OpenIncident  *openIncidentResponse  `json:"open_incident"`
+	TargetID      string                `json:"target_id"`
+	DisplayState  string                `json:"display_state"`
+	RawState      string                `json:"raw_state"`
+	Streak        int                   `json:"streak"`
+	LastCheckedAt *time.Time            `json:"last_checked_at"`
+	NextDueAt     time.Time             `json:"next_due_at"`
+	AgentID       *string               `json:"agent_id"`
+	AgentStale    *bool                 `json:"agent_stale"`
+	OpenIncident  *openIncidentResponse `json:"open_incident"`
 }
 
 // GetTargetStatus is GET /api/v1/targets/{target_id}/status

@@ -22,18 +22,37 @@ import (
 	"github.com/arb-rajab/pulsewatch/backend/internal/scheduler"
 )
 
-// setupRouter wires the health check, ADR-0003's agent-facing surface (GET
-// /api/v1/agent/assignments, POST /v1/logs — internal/agentapi), and
-// 05-api-contracts.md's operator-facing REST surface (internal/operatorapi,
-// gated by RequireOperator's session cookie — Session 8). pool may be nil
-// only for tests that exercise /health alone; any agentapi/operatorapi
-// route registered against a nil pool will fail if actually invoked, never
-// at registration time.
-func setupRouter(pool *pgxpool.Pool, dispatcher alerting.Dispatcher, channelKey []byte, sessionSecret []byte, logger *slog.Logger) *gin.Engine {
+// setupOperatorRouter wires the health check and 05-api-contracts.md's
+// operator-facing REST surface (internal/operatorapi, gated by
+// RequireOperator's session cookie — Session 8) onto their own *gin.Engine,
+// served on its own listener (run(): operatorAddr) that is never published
+// as a host port directly — the only way to reach it is through the
+// TLS-terminating `proxy` (Caddy, R-001) or the internal Docker network.
+// This is the fix for the cross-port session-cookie leak found closing out
+// Session 10: operatorapi routes are simply not mounted anywhere an
+// operator's real session cookie could ever be replayed in plaintext,
+// regardless of what a client sends. pool may be nil only for tests that
+// exercise /health alone; an operatorapi route registered against a nil
+// pool will fail if actually invoked, never at registration time.
+func setupOperatorRouter(pool *pgxpool.Pool, sessionSecret []byte, channelKey []byte) *gin.Engine {
+	r := gin.Default()
+	r.GET("/health", healthHandler)
+	operatorapi.RegisterRoutes(r, pool, sessionSecret, channelKey)
+	return r
+}
+
+// setupAgentRouter wires the health check and ADR-0003's agent-facing
+// surface (GET /api/v1/agent/assignments, POST /v1/logs — internal/agentapi)
+// onto their own *gin.Engine, served on its own listener (run(): agentAddr)
+// that is the one still published as a plain-HTTP host port (docker-compose
+// R-003) for agent bearer-token traffic. No operatorapi route is ever
+// mounted on this engine — there is no server-side path where an operator
+// session cookie is meaningful here, not merely one where it happens to be
+// rejected.
+func setupAgentRouter(pool *pgxpool.Pool, dispatcher alerting.Dispatcher, channelKey []byte, logger *slog.Logger) *gin.Engine {
 	r := gin.Default()
 	r.GET("/health", healthHandler)
 	agentapi.RegisterRoutes(r, pool, dispatcher, channelKey, logger)
-	operatorapi.RegisterRoutes(r, pool, sessionSecret, channelKey)
 	return r
 }
 
@@ -90,12 +109,32 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	srv := &http.Server{Addr: ":8080", Handler: setupRouter(pool, dispatcher, channelKey, sessionSecret, slog.Default())}
+	// Two separate listeners, not one shared *gin.Engine (Session 11,
+	// closing the cross-port session-cookie leak found at Session 10's
+	// closeout): operatorSrv carries every operatorapi route and is only
+	// ever reached through the internal Docker network (by `proxy`/Caddy,
+	// R-001) — docker-compose.yml does not publish operatorAddr as a host
+	// port at all. agentSrv carries only agentapi's routes and is the one
+	// still published directly as a plain-HTTP host port for agent traffic
+	// (R-003) — replaying an operator's session cookie against it can never
+	// reach an operatorapi handler, because none are registered on this
+	// engine, not merely because the cookie fails some check on the way in.
+	const operatorAddr = ":8080"
+	const agentAddr = ":8081"
+	operatorSrv := &http.Server{Addr: operatorAddr, Handler: setupOperatorRouter(pool, sessionSecret, channelKey)}
+	agentSrv := &http.Server{Addr: agentAddr, Handler: setupAgentRouter(pool, dispatcher, channelKey, slog.Default())}
 
-	httpErrCh := make(chan error, 1)
+	httpErrCh := make(chan error, 2)
 	go func() {
-		if serveErr := srv.ListenAndServe(); serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
-			httpErrCh <- serveErr
+		if serveErr := operatorSrv.ListenAndServe(); serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
+			httpErrCh <- fmt.Errorf("operator http server: %w", serveErr)
+			return
+		}
+		httpErrCh <- nil
+	}()
+	go func() {
+		if serveErr := agentSrv.ListenAndServe(); serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
+			httpErrCh <- fmt.Errorf("agent http server: %w", serveErr)
 			return
 		}
 		httpErrCh <- nil
@@ -121,8 +160,11 @@ func run() error {
 	// framing applied to the HTTP server side of the process.
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), schedCfg.HardShutdownDeadline) //nolint:contextcheck // intentional fresh bound, root ctx is already canceled
 	defer cancel()
-	if err := srv.Shutdown(shutdownCtx); err != nil {
-		slog.Error("http server shutdown", "error", err)
+	if err := operatorSrv.Shutdown(shutdownCtx); err != nil {
+		slog.Error("operator http server shutdown", "error", err)
+	}
+	if err := agentSrv.Shutdown(shutdownCtx); err != nil {
+		slog.Error("agent http server shutdown", "error", err)
 	}
 
 	if err := <-schedDoneCh; err != nil {

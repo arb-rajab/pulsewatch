@@ -79,8 +79,18 @@ services:
       # missing secret (main.go: operatorauth.SigningSecretFromEnv).
       # Generate a real one with: openssl rand -base64 32
       SESSION_SIGNING_SECRET: "${SESSION_SIGNING_SECRET:?SESSION_SIGNING_SECRET is required — generate one with: openssl rand -base64 32}"
+    # Session 11 (closing the cross-port session-cookie leak found at
+    # Session 10's closeout): `backend` now runs two separate HTTP listeners
+    # (backend/main.go: operatorSrv on :8080, agentSrv on :8081), not one
+    # shared engine. Only the agent-facing listener (:8081, agent-only
+    # routes per ADR-0003 — no operatorapi route is ever mounted on it) is
+    # published as a host port; :8080 (every operatorapi route, gated by
+    # RequireOperator's session cookie) is reachable only over the internal
+    # Docker network, by `proxy`/Caddy (R-001) or another container — never
+    # directly from the host in plain HTTP. See R-003/R-001 in
+    # 10-risk-register.md and 08-deployment-and-operations.md.
     ports:
-      - "8020:8080"
+      - "8020:8081"
     depends_on:
       postgres:
         condition: service_healthy
@@ -89,7 +99,10 @@ services:
       migrate:
         condition: service_completed_successfully
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
+      # Checks both listeners — this container is only "healthy" if the
+      # operator-facing (:8080) and agent-facing (:8081) servers are both
+      # actually serving, not just whichever one happens to be published.
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/health && wget -qO- http://localhost:8081/health"]
       interval: 5s
       timeout: 5s
       retries: 10

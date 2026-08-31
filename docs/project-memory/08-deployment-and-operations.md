@@ -37,16 +37,72 @@ anywhere yet — GitHub Actions (`.github/`) runs tests/lint only.
 4. Open `https://localhost:8443` (or whatever host/port you've mapped
    `proxy`'s `8443:443` to) and log in.
 
-## TLS termination (R-001 — real, as of this session)
+## TLS termination (R-001 — real, as of Session 10) and the operator/agent listener split (R-004 — Session 11)
 
-**What changed:** a `proxy` service (`caddy:2-alpine`) was added to
-`docker-compose.yml`, configured by the checked-in `./Caddyfile`, and is now
-the *only* way a browser reaches this deployment. `frontend` no longer
+**What changed (Session 10):** a `proxy` service (`caddy:2-alpine`) was added
+to `docker-compose.yml`, configured by the checked-in `./Caddyfile`, and is
+now the *only* way a browser reaches this deployment. `frontend` no longer
 publishes a host port at all (`expose: 3000`, internal-only) — there is no
 plain-HTTP path to the login/dashboard flow left to accidentally use instead
-of the real one. `backend` still publishes its own host port (`8020:8080`)
-in plain HTTP; that is unchanged and intentional (see "What didn't change /
-residual gap" below).
+of the real one.
+
+**What changed (Session 11 — closing the cross-port session-cookie leak
+found at Session 10's own closeout):** closing out Session 10, a live test
+showed that `backend`'s directly-published agent port did not actually
+scope out operator traffic the way R-001's and R-003's own text claimed —
+`agentapi` and `operatorapi` were registered on the identical `gin.Engine`/
+`http.Server` (`backend/main.go`), so a real operator's `Secure`,
+`HttpOnly` `pulsewatch_session` cookie, issued over `https://localhost:8443`,
+was accepted in cleartext by that port and returned real target data.
+`Secure` did not help: `localhost`/loopback is treated as a trustworthy
+origin regardless of scheme, and `Path`/`Domain` cookie attributes don't
+carry port scoping either (RFC 6265). See R-004 (closed) in
+`10-risk-register.md` for the full before/after evidence.
+
+**The fix — split the routers, not the TLS story:** `backend/main.go` now
+builds two separate `*gin.Engine`s and runs two independent `http.Server`s
+inside the single `backend` process/container:
+
+- `operatorSrv` (`setupOperatorRouter`, container port `8080`) — every
+  `operatorapi` route (session login/logout, targets, alert channels,
+  agents), gated by `RequireOperator`. **Not published as a host port at
+  all** — reachable only over the internal Docker network, by `proxy`/Caddy
+  (`/api/*` → `backend:8080`, unchanged from Session 10) or another
+  container.
+- `agentSrv` (`setupAgentRouter`, container port `8081`) — every `agentapi`
+  route (`GET /api/v1/agent/assignments`, `POST /v1/logs`), gated by
+  `RequireAgent`. **This is the one published as a host port**
+  (`docker-compose.yml`: `8020:8081` — the external `8020` address is
+  unchanged from every prior session's docs/README, only its internal
+  container-port target moved from `8080` to `8081`).
+
+No `operatorapi` route is registered on `agentSrv`, and no `agentapi` route
+is registered on `operatorSrv` — this is a structural absence, not a check
+that happens to reject a replayed cookie (`backend/main_test.go`:
+`TestOperatorRouterHasNoAgentRoutes`/`TestAgentRouterHasNoOperatorRoutes`
+assert the routes are genuinely unmounted). A session cookie replayed
+against `8020` now gets a real `404 page not found` — there is no route
+there for it to be rejected *by*, because no operator-facing code is
+reachable through that listener under any circumstance.
+
+**Why this option, not "route agent traffic through Caddy too" (R-003's own
+suggested alternative mitigation):** that alternative would also work, but
+costs more for what this session actually needed. It would require (a)
+removing `backend`'s direct host port entirely so *all* traffic, agent
+included, funnels through `proxy`, and (b) the reference agent
+(`backend/cmd/agent`) trusting Caddy's `tls internal` self-signed CA — fine
+for this same-host `docker compose` deployment, but a real, undischarged
+cost for this developer's actual stated agent-deployment model
+(`00-project-brief.md`: agents on `privacy-forge`/`laravel-consent-guard`/
+`bookslot`/`lexicon`'s own separate hosts), which would need that CA
+certificate distributed to every such host — a cert-distribution problem
+this session did not want to take on silently. The router split achieves
+this session's actual, bounded objective (operator cookies can never reach
+`operatorapi` over `8020`) with no agent-binary change and no new
+cross-host trust story, at the cost of leaving R-003's narrower remaining
+gap (agent bearer tokens/telemetry still plaintext) open for a future
+session to pick up, named honestly rather than silently folded into this
+one's "done."
 
 **Routing:** `Caddyfile` sends `/api/*` to `backend:8080` and everything else
 to `frontend:3000`, both reachable through the same `https://localhost:8443`
@@ -98,14 +154,15 @@ session — it's the documented upgrade route, not a claim that it's already
 verified working.
 
 **What didn't change / residual gap — named, not silently left implicit:**
-`backend`'s own directly-published port (`8020:8080`) is still plain HTTP.
-This is intentional and out of this session's scope: agents authenticate to
-`backend` directly (`GET /api/v1/agent/assignments`, OTLP ingestion —
-ADR-0003), and changing that transport is an agent-facing change this
-session's own ground rules excluded ("do not touch... agent auth... any
-ADR-governed subsystem"). It is a real, distinct residual gap from R-001
-(which was specifically about the *browser-facing* `Secure` operator-session
-cookie, now fixed) — tracked separately, see `10-risk-register.md` R-003.
+`backend`'s agent-facing listener (published as `8020:8081`) is still plain
+HTTP. This is intentional and out of Session 11's scope too: agents
+authenticate to `backend` directly (`GET /api/v1/agent/assignments`, OTLP
+ingestion — ADR-0003), and changing that transport is an agent-facing
+change both sessions' ground rules excluded ("do not touch... agent
+auth... any ADR-governed subsystem"). Unlike before Session 11, this is now
+a *pure* agent-transport gap — no operator-session data is reachable
+through this listener at all (R-004, closed) — tracked as R-003's own
+narrowed scope in `10-risk-register.md`.
 
 ## Migration and rollback procedure
 `migrate` (image `migrate/migrate:v4.19.1`) runs `backend/migrations` against
@@ -124,8 +181,12 @@ needs no credentials).
 ## Observability: logs, metrics, traces, health checks
 `docker compose logs <service>` for each service, including `proxy` (Caddy's
 own structured JSON access/error log). OTel Collector unchanged this
-session. `backend`/`frontend` both still expose `/health`, reachable
-directly on their own ports and through the proxy.
+session. `frontend` still exposes `/health`, reachable through the proxy.
+`backend` now exposes `/health` on *both* of its listeners independently
+(Session 11: `setupOperatorRouter`/`setupAgentRouter` each register it) —
+the container's own `healthcheck:` in `docker-compose.yml` checks both, so
+the container only reports `healthy` if the operator-facing and
+agent-facing servers are both actually serving.
 
 ## Dashboards and alerts (each links a runbook)
 The operator dashboard (`/dashboard`, Session 9) is the first read surface;
