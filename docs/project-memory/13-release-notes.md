@@ -1,10 +1,16 @@
 # Release Notes
 > Purpose: what changed, for humans
 > Project: pulsewatch (public)
-> Last updated: 2026-08-31
+> Last updated: 2026-09-01
 
 ## Unreleased
 ### Added
+- The rollup job (`internal/rollup`) now logs a `WARN` whenever the real
+  wall-clock gap since its previous tick exceeds `TickInterval` by more than
+  10%, naming the expected interval and the actual gap — surfacing a
+  cadence violation (e.g. this developer's own machine's Docker VM pausing
+  during host idle) that was previously silent, though not itself
+  fixable in code (Session 13, R-006).
 - FR-008's hourly rollup job (`internal/rollup`) computes real per-target,
   per-hour uptime/latency aggregates into `check_rollups_hourly`; a new
   `GET /api/v1/targets/{id}/slo` endpoint reads them into a rolling-window

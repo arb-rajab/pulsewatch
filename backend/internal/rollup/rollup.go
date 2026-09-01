@@ -145,6 +145,15 @@ func RunOnce(ctx context.Context, pool *pgxpool.Pool, timeout time.Duration) (in
 	return tag.RowsAffected(), nil
 }
 
+// cadenceGapExceeded reports whether gap — the real time elapsed since the
+// previous tick actually ran — violates NFR-005's "fixed hourly cadence" by
+// more than a 10% tolerance (scheduling jitter under load, not a real gap).
+// Exported as its own function so the threshold logic is unit-testable
+// without waiting for or faking an actual multi-hour gap.
+func cadenceGapExceeded(cfg Config, gap time.Duration) bool {
+	return gap > cfg.TickInterval+cfg.TickInterval/10
+}
+
 // Run starts the hourly rollup job and blocks until ctx is canceled, the
 // same shutdown shape scheduler.Scheduler.Run already uses. It runs one pass
 // immediately on startup — not just on the first tick an hour later — so a
@@ -156,8 +165,25 @@ func Run(ctx context.Context, pool *pgxpool.Pool, cfg Config, logger *slog.Logge
 		logger = slog.Default()
 	}
 
+	var lastTickAt time.Time
+
+	// time.Ticker never queues missed ticks: if this process's own clock
+	// doesn't advance for a stretch — e.g. a dev machine's Docker VM pausing
+	// while the host is idle — and then resumes, exactly one catch-up tick
+	// fires with no error, no crash, and (before this) no signal that
+	// NFR-005's cadence was actually violated in between. RunOnce's own
+	// full-history recompute means no data is lost, but an operator reading
+	// /slo has no way to know staleness briefly exceeded its bound unless
+	// it's logged here.
 	runTick := func() {
 		start := time.Now()
+		if !lastTickAt.IsZero() {
+			if gap := start.Sub(lastTickAt); cadenceGapExceeded(cfg, gap) {
+				logger.Warn("rollup job cadence gap exceeded expected interval — check_rollups_hourly was stale until this run", "expected_interval", cfg.TickInterval, "actual_gap", gap)
+			}
+		}
+		lastTickAt = start
+
 		rows, err := RunOnce(ctx, pool, cfg.OpTimeout)
 		if err != nil {
 			logger.Error("rollup job run failed", "error", err)

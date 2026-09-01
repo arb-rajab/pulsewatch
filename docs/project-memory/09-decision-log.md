@@ -1,7 +1,7 @@
 # Decision Log
 > Purpose: why things are the way they are, so decisions are not silently undone
 > Project: pulsewatch (public)
-> Last updated: 2026-08-29 (Session 3)
+> Last updated: 2026-09-01 (Session 13)
 
 Full reasoning for each ADR lives in `docs/adr/`. This log is the
 short-form index — read it first, open the linked ADR for the trade-off
@@ -70,3 +70,29 @@ detail.
   a real, separate reconciliation mechanism replaces it. Revisit only
   against measured tick duration exceeding NFR-005's 5-minute bound (this
   session measured 350ms on real data), not by default habit.
+
+## Session 13 — Rollup Cadence Gaps Get Visibility Logging, Not a Forced-Tick Workaround
+- **Date:** 2026-09-01 · **Status:** accepted (implementation-level, not a new ADR)
+- **Decision:** when the real-world gap since the rollup job's previous tick
+  exceeds `TickInterval` by more than 10%, `rollup.Run` now logs a `WARN`
+  naming the expected interval and the actual gap. No mechanism was added to
+  force ticks to happen during a gap, and no periodic-restart or watchdog
+  workaround was added.
+- **Must not be silently reversed because:** the originally-reported "rollup
+  job silently stopped ticking" symptom (R-006, `10-risk-register.md`) was
+  root-caused to this developer's own machine — Docker Desktop's WSL2 VM
+  going unscheduled for extended stretches during host idle, confirmed by
+  identical simultaneous silent gaps in `pulsewatch-postgres-1`'s own logs
+  and `pulsewatch-backend-1`'s entire HTTP traffic, not just rollup logging.
+  A `time.Ticker` cannot fire while its process isn't being scheduled at
+  all — there is no code-level fix for that. Forcing a workaround (e.g.
+  periodically restarting the job) would treat a real environmental
+  characteristic as a code defect and add machinery that solves nothing a
+  real always-on deployment would ever need. The chosen fix instead makes
+  the *existing* self-healing property (Session 12's recompute-everything
+  design already means no data is lost across a gap) observable, so an
+  operator watching real logs knows when `/slo`'s freshness bound was
+  actually violated instead of trusting a silently-stale dashboard.
+  Revisit if a real always-on deployment (post R-003) ever shows this
+  warning firing — that would mean the mechanism is not, in fact, limited
+  to dev-machine VM idling, and would need real investigation.
