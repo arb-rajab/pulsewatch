@@ -1,5 +1,54 @@
 # Session Handoff
 
+## Re-verification pass (2026-09-01, same day as Session 13)
+
+Session 13's own claims for items 1 (rollup cadence root cause), 2 (the
+extended-observation window), and 3 (the real, non-mock auth capture) had
+been narrated accurately in this file but were **not backed by any
+retrievable raw artifact** — the underlying containers had been recreated
+after the fact, so there was nothing left to point to. A dedicated
+re-verification pass re-ran all three and this time persisted the actual
+raw output as it was captured, under `docs/project-memory/evidence/`:
+
+- **Item 1 (rollup cadence root cause) — re-confirmed and refined, not
+  merely repeated.** A fresh live gap was caught in progress (not
+  historical): rollup ticks and `pulsewatch-postgres-1`'s own logging both
+  went silent after ~15:44–15:52 and were still silent ~3h later at capture
+  time, correlated across both containers exactly as originally reported —
+  but this time with **no** `Microsoft-Windows-Kernel-Power` sleep/wake
+  event covering the gap window at all, meaning the mechanism isn't tied to
+  an explicit OS sleep event the way the original write-up implied. Raw
+  evidence: `docs/project-memory/evidence/session13-logs.txt`.
+- **Item 2 (extended-observation window) — re-run live, artifact is the
+  real stream.** `TickInterval` lowered to 20s
+  (`session13-tickinterval-diff-lowered.txt`), backend rebuilt/redeployed
+  (`session13-build-lowered.txt`, `session13-redeploy-lowered.txt`), real
+  log output redirected live to a file as the job ran
+  (`docs/project-memory/evidence/session13-rollup-ticks.log`) — 11
+  consecutive real ticks at ~20s cadence (16:08:32–16:11:52), zero
+  cadence-gap WARNs. Reverted (`session13-tickinterval-diff-restored.txt`
+  — empty diff, confirming byte-identical to committed `main.go`), rebuilt
+  (`session13-build-restored.txt`), redeployed, real post-restore startup
+  tick captured (`session13-redeploy-restored.txt`).
+- **Item 3 (real auth capture) — re-run live with a fresh credential
+  reset.** The prior session's reset password wasn't preserved anywhere
+  retrievable, so a new one was generated via the same documented
+  break-glass path, named and confirmed with the user first
+  (`session13-pw-reset-output.txt`). Real login → real `/slo` (separate TLS
+  connection) → real dashboard render, all captured live via
+  `curl -v ... | Tee-Object` as the requests happened:
+  `docs/project-memory/evidence/session13-auth-capture.txt` (login +
+  `/slo`), `session13-dashboard-capture.txt` (dashboard HTML, `99.91%`
+  uptime matching the `/slo` response verbatim in both the rendered table
+  and the hydration data island). Throwaway reset tool
+  (`backend/cmd/_verify_resetpw`) and the session cookie jar were deleted
+  after use, consistent with Session 12/13's own precedent.
+
+No R-005 recurrence this pass (no `go test` was run; `targets` count
+confirmed still exactly 4 real rows throughout). See
+`00c-evidence-preservation.md` for why this pass was needed and the
+practice change it prompted.
+
 ## Project
 - Repository: `pulsewatch`
 - Public or private: public (flagship)

@@ -1,0 +1,16 @@
+﻿docker : go: downloading github.com/jackc/pgx/v5 v5.10.0
+At line:1 char:302
++ ... tch {} } }; docker run --rm --network pulsewatch_default -v "${PWD}/b ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (go: downloading.../pgx/v5 v5.10.0:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+go: downloading golang.org/x/crypto v0.48.0
+go: downloading github.com/jackc/puddle/v2 v2.2.2
+go: downloading github.com/jackc/pgpassfile v1.0.0
+go: downloading github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761
+go: downloading golang.org/x/text v0.39.0
+go: downloading golang.org/x/sync v0.21.0
+email:    operator@example.com
+password: [REDACTED before commit — public repo; the raw value was used once for the immediately-following login capture in session13-auth-capture.txt, then the credential was rotated again to invalidate it]
+rows_affected: 1

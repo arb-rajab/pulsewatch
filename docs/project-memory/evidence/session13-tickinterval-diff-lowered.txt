@@ -1,0 +1,20 @@
+﻿diff --git a/backend/main.go b/backend/main.go
+index 1e408a7..c243fce 100644
+--- a/backend/main.go
++++ b/backend/main.go
+@@ -11,6 +11,7 @@ import (
+ 	"os"
+ 	"os/signal"
+ 	"syscall"
++	"time"
+ 
+ 	"github.com/gin-gonic/gin"
+ 	"github.com/jackc/pgx/v5/pgxpool"
+@@ -95,6 +96,7 @@ func run() error {
+ 	}
+ 
+ 	rollupCfg := rollup.DefaultConfig()
++	rollupCfg.TickInterval = 20 * time.Second // TEMPORARY — Session 13 re-verification observation window, reverted before commit
+ 
+ 	// The agent-facing OTLP ingestion path (internal/agentapi) dispatches
+ 	// notifications through the identical alerting.Dispatcher/channel-key

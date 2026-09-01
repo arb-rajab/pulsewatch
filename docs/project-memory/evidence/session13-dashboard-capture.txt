@@ -1,0 +1,104 @@
+﻿curl.exe : * Host localhost:8443 was resolved.
+At line:1 char:302
++ ... tch {} } }; curl.exe -v -k -b cookies.txt https://localhost:8443/dash ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (* Host localhost:8443 was resolved.:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+* IPv6: ::1
+* IPv4: 127.0.0.1
+*   Trying [::1]:8443...
+* schannel: disabled automatic use of client certificate
+* ALPN: curl offers http/1.1
+* ALPN: server accepted http/1.1
+* Established connection to localhost (::1 port 8443) from ::1 port 52039 
+  % Total    % Received % Xferd  Average Speed  Time    Time    Time   Current
+                                 Dload  Upload  Total   Spent   Left   Speed
+
+  0      0   0      0   0      0      0      0                              0* using HTTP/1.x
+> GET /dashboard HTTP/1.1
+
+> Host: localhost:8443
+
+> User-Agent: curl/8.21.0
+
+> Accept: */*
+
+> Cookie: pulsewatch_session=YzI2OTYwYjItZDU0ZS00YWE4LWJjMzItNWE0NDA5MGFlMWViOjE3ODgzNjcwODg.HQIgH15Sb1oJ7wJlG5ZVlXrxtr
+BZTx3YbRvVjbQJUtI
+
+> 
+
+* Request completely sent off
+* schannel: remote party requests renegotiation
+* schannel: renegotiating SSL/TLS connection
+* schannel: SSL/TLS connection renegotiated
+
+  0      0   0      0   0      0      0      0           00:01              0
+  0      0   0      0   0      0      0      0           00:02              0
+  0      0   0      0   0      0      0      0           00:03              0< HTTP/1.1 200 OK
+
+< Alt-Svc: h3=":443"; ma=2592000
+
+< Content-Length: 6105
+
+< Content-Type: text/html
+
+< Date: Tue, 01 Sep 2026 16:40:13 GMT
+
+< Etag: "1ik6c3v"
+
+< Link: <./_app/immutable/assets/3.DYflQjWK.css>; rel="preload"; as="style"; nopush, 
+<./_app/immutable/entry/start.VbFc2Wx3.js>; rel="modulepreload"; nopush, <./_app/immutable/chunks/gANv_S9V.js>; 
+rel="modulepreload"; nopush, <./_app/immutable/chunks/DUYgYpWS.js>; rel="modulepreload"; nopush, 
+<./_app/immutable/entry/app.DRUK-4IO.js>; rel="modulepreload"; nopush, <./_app/immutable/chunks/xihTtKlq.js>; 
+rel="modulepreload"; nopush, <./_app/immutable/nodes/0.lIM4XEjN.js>; rel="modulepreload"; nopush, 
+<./_app/immutable/nodes/3.DVjhF1Dy.js>; rel="modulepreload"; nopush
+
+< Via: 1.1 Caddy
+
+< X-Sveltekit-Page: true
+
+< 
+
+{ [425 bytes data]
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<!--x1i5gj--><!----><title>Dashboard — pulsewatch</title>
+		<link href="./_app/immutable/assets/3.DYflQjWK.css" rel="stylesheet">
+	</head>
+	<body data-sveltekit-preload-data="hover">
+		<div style="display: contents"><!--[--><!--[0--><!--[--><!--[--><main class="svelte-x1i5gj"><header class="svelte-x1i5gj"><h1>pulsewatch</h1> <form method="POST" action="?/logout"><button type="submit">Log out</button></form></header> <!--[-1--><!--]--> <!--[-1--><table class="svelte-x1i5gj"><thead><tr><th class="svelte-x1i5gj">Target</th><th class="svelte-x1i5gj">Status</th><th class="svelte-x1i5gj">Last checked</th><th class="svelte-x1i5gj">Uptime (30d)</th></tr></thead><tbody><!--[--><tr><td class="svelte-x1i5gj">redis:6379</td><td class="svelte-x1i5gj"><!--[0--><span class="badge state-healthy svelte-x1i5gj">Healthy</span><!--]--></td><td class="svelte-x1i5gj">2026-09-01T16:39:50.88775Z</td><td class="svelte-x1i5gj"><!--[0-->99.91%<!--]--></td></tr><tr><td class="svelte-x1i5gj">http://backend:8080/health</td><td class="svelte-x1i5gj"><!--[0--><span class="badge state-healthy svelte-x1i5gj">Healthy</span><!--]--></td><td class="svelte-x1i5gj">2026-09-01T16:40:02.068592Z</td><td class="svelte-x1i5gj"><!--[0-->99.74%<!--]--></td></tr><tr><td class="svelte-x1i5gj">http://backend:8080/this-path-does-not-exist</td><td class="svelte-x1i5gj"><!--[0--><span class="badge state-alerting svelte-x1i5gj">Alerting</span><!--]--></td><td class="svelte-x1i5gj">2026-09-01T16:40:06.838132Z</td><td class="svelte-x1i5gj"><!--[0-->0.00%<!--]--></td></tr><tr><td class="svelte-x1i5gj">http://backend:8080/also-does-not-exist</td><td class="svelte-x1i5gj"><!--[0--><span class="badge state-alerting svelte-x1i5gj">Alerting</span><!--]--></td><td class="svelte-x1i5gj">2026-09-01T16:40:10.926604Z</td><td class="svelte-x1i5gj"><!--[0-->0.00%<!--]--></td></tr><!--]--></tbody></table><!--]--></main><!--]--><!----><!--]--><!--]--> <!--[-1--><!--]--><!--]-->
+			
+			<script>
+				{
+					__sveltekit_f67lkn = {
+						base: new URL(".", location).pathname.slice(0, -1)
+					};
+
+					const element = document.currentScript.parentElement;
+
+					Promise.all([
+						import("./_app/immutable/entry/start.VbFc2Wx3.js"),
+						import("./_app/immutable/entry/app.DRUK-4IO.js")
+					]).then(([kit, app]) => {
+						kit.start(app, element, {
+							node_ids: [0, 3],
+							data: [null,{type:"data",data:{rows:[{target:{id:"2556de3a-3ac3-4832-9df7-4c919f28afa0",type:"tcp",url:null,host:"redis",port:6379,body_match_pattern:null,interval_seconds:30,failure_threshold:3,timeout_seconds:5,agent_id:null,created_at:"2026-08-29T16:48:25.918587Z"},status:{target_id:"2556de3a-3ac3-4832-9df7-4c919f28afa0",display_state:"healthy",raw_state:"healthy",streak:0,last_checked_at:"2026-09-01T16:39:50.88775Z",next_due_at:"2026-09-01T16:40:20.88775Z",agent_id:null,agent_stale:null,open_incident:null},statusError:null,slo:{target_id:"2556de3a-3ac3-4832-9df7-4c919f28afa0",window_days:30,window_start:"2026-08-02T16:00:00Z",window_end:"2026-09-01T16:00:00Z",expected_checks:8543,success_count:1171,failure_count:1,unknown_count:7371,uptime_pct:99.9146757679181,slo_target_pct:99.9,error_budget_consumed_pct:85.32423208190694},sloError:null},{target:{id:"4d7a6f12-0867-4034-b1da-e624b456615c",type:"http",url:"http://backend:8080/health",host:null,port:null,body_match_pattern:null,interval_seconds:30,failure_threshold:3,timeout_seconds:5,agent_id:null,created_at:"2026-08-29T16:48:07.051794Z"},status:{target_id:"4d7a6f12-0867-4034-b1da-e624b456615c",display_state:"healthy",raw_state:"healthy",streak:0,last_checked_at:"2026-09-01T16:40:02.068592Z",next_due_at:"2026-09-01T16:40:32.068592Z",agent_id:null,agent_stale:null,open_incident:null},statusError:null,slo:{target_id:"4d7a6f12-0867-4034-b1da-e624b456615c",window_days:30,window_start:"2026-08-02T16:00:00Z",window_end:"2026-09-01T16:00:00Z",expected_checks:8543,success_count:1171,failure_count:3,unknown_count:7369,uptime_pct:99.74446337308348,slo_target_pct:99.9,error_budget_consumed_pct:255.53662691653787},sloError:null},{target:{id:"50206b79-9959-44d6-ac06-732bd225130e",type:"http",url:"http://backend:8080/this-path-does-not-exist",host:null,port:null,body_match_pattern:null,interval_seconds:10,failure_threshold:3,timeout_seconds:2,agent_id:null,created_at:"2026-08-30T09:49:00.368185Z"},status:{target_id:"50206b79-9959-44d6-ac06-732bd225130e",display_state:"alerting",raw_state:"alerting",streak:3490,last_checked_at:"2026-09-01T16:40:06.838132Z",next_due_at:"2026-09-01T16:40:16.838132Z",agent_id:null,agent_stale:null,open_incident:{id:1,opened_at:"2026-08-30T09:49:29.383224Z"}},statusError:null,slo:{target_id:"50206b79-9959-44d6-ac06-732bd225130e",window_days:30,window_start:"2026-08-02T16:00:00Z",window_end:"2026-09-01T16:00:00Z",expected_checks:19505,success_count:0,failure_count:3271,unknown_count:16234,uptime_pct:0,slo_target_pct:99.9,error_budget_consumed_pct:100000.00000000569},sloError:null},{target:{id:"990b91a1-5676-4ef0-bf3c-78c2d7c285ec",type:"http",url:"http://backend:8080/also-does-not-exist",host:null,port:null,body_match_pattern:null,interval_seconds:10,failure_threshold:3,timeout_seconds:2,agent_id:null,created_at:"2026-08-30T09:51:41.928645Z"},status:{target_id:"990b91a1-5676-4ef0-bf3c-78c2d7c285ec",display_state:"alerting",raw_state:"alerting",streak:3473,last_checked_at:"2026-09-01T16:40:10.926604Z",next_due_at:"2026-09-01T16:40:20.926604Z",agent_id:null,agent_stale:null,open_incident:{id:2,opened_at:"2026-08-30T09:52:08.438654Z"}},statusError:null,slo:{target_id:"990b91a1-5676-4ef0-bf3c-78c2d7c285ec",window_days:30,window_start:"2026-08-02T16:00:00Z",window_end:"2026-09-01T16:00:00Z",expected_checks:19489,success_count:0,failure_count:3254,unknown_count:16235,uptime_pct:0,slo_target_pct:99.9,error_budget_consumed_pct:100000.00000000569},sloError:null}],loadError:null},uses:{}}],
+							form: null,
+							error: null
+						});
+					});
+				}
+			</script>
+		</div>
+	</body>
+</html>
+
+100   6105 100   6105   0      0   1521      0   00:04   00:04           1636
+100   6105 100   6105   0      0   1521      0   00:04   00:04           1636
+100   6105 100   6105   0      0   1521      0   00:04   00:04           1636
+* Connection #0 to host localhost:8443 left intact

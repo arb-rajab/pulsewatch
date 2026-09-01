@@ -1,0 +1,119 @@
+﻿curl.exe : * Host localhost:8443 was resolved.
+At line:2 char:1
++ curl.exe -v -k -c cookies.txt -H "Content-Type: application/json" --d ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (* Host localhost:8443 was resolved.:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+* IPv6: ::1
+* IPv4: 127.0.0.1
+*   Trying [::1]:8443...
+* schannel: disabled automatic use of client certificate
+* ALPN: curl offers http/1.1
+* ALPN: server accepted http/1.1
+* Established connection to localhost (::1 port 8443) from ::1 port 58669 
+  % Total    % Received % Xferd  Average Speed  Time    Time    Time   Current
+                                 Dload  Upload  Total   Spent   Left   Speed
+
+  0      0   0      0   0      0      0      0                              0* using HTTP/1.x
+> POST /api/v1/auth/login HTTP/1.1
+
+> Host: localhost:8443
+
+> User-Agent: curl/8.21.0
+
+> Accept: */*
+
+> Content-Type: application/json
+
+> Content-Length: 79
+
+> 
+
+} [79 bytes data]
+* upload completely sent off: 79 bytes
+* schannel: remote party requests renegotiation
+* schannel: renegotiating SSL/TLS connection
+* schannel: SSL/TLS connection renegotiated
+< HTTP/1.1 200 OK
+
+< Alt-Svc: h3=":443"; ma=2592000
+
+< Content-Length: 85
+
+< Content-Type: application/json; charset=utf-8
+
+< Date: Tue, 01 Sep 2026 16:38:08 GMT
+
+* Added cookie pulsewatch_session="YzI2OTYwYjItZDU0ZS00YWE4LWJjMzItNWE0NDA5MGFlMWViOjE3ODgzNjcwODg.HQIgH15Sb1oJ7wJlG5ZV
+lXrxtrBZTx3YbRvVjbQJUtI" for domain localhost, path /, expire 1788367087
+< Set-Cookie: pulsewatch_session=YzI2OTYwYjItZDU0ZS00YWE4LWJjMzItNWE0NDA5MGFlMWViOjE3ODgzNjcwODg.HQIgH15Sb1oJ7wJlG5ZVlX
+rxtrBZTx3YbRvVjbQJUtI; Path=/; Max-Age=86399; HttpOnly; Secure; SameSite=Strict
+
+< Via: 1.1 Caddy
+
+< 
+
+{ [85 bytes data]
+
+100    164 100     85 100     79    183    170                              0
+100    164 100     85 100     79    183    170                              0
+100    164 100     85 100     79    183    170                              0
+* Connection #0 to host localhost:8443 left intact
+{"operator_id":"c26960b2-d54e-4aa8-bc32-5a44090ae1eb","email":"operator@example.com"}
+curl.exe : * Host localhost:8443 was resolved.
+At line:1 char:302
++ ... tch {} } }; curl.exe -v -k -b cookies.txt https://localhost:8443/api/ ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (* Host localhost:8443 was resolved.:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+* IPv6: ::1
+* IPv4: 127.0.0.1
+*   Trying [::1]:8443...
+* schannel: disabled automatic use of client certificate
+* ALPN: curl offers http/1.1
+* ALPN: server accepted http/1.1
+* Established connection to localhost (::1 port 8443) from ::1 port 55064 
+  % Total    % Received % Xferd  Average Speed  Time    Time    Time   Current
+                                 Dload  Upload  Total   Spent   Left   Speed
+
+  0      0   0      0   0      0      0      0                              0* using HTTP/1.x
+> GET /api/v1/targets/2556de3a-3ac3-4832-9df7-4c919f28afa0/slo HTTP/1.1
+
+> Host: localhost:8443
+
+> User-Agent: curl/8.21.0
+
+> Accept: */*
+
+> Cookie: pulsewatch_session=YzI2OTYwYjItZDU0ZS00YWE4LWJjMzItNWE0NDA5MGFlMWViOjE3ODgzNjcwODg.HQIgH15Sb1oJ7wJlG5ZVlXrxtr
+BZTx3YbRvVjbQJUtI
+
+> 
+
+* Request completely sent off
+* schannel: remote party requests renegotiation
+* schannel: renegotiating SSL/TLS connection
+* schannel: SSL/TLS connection renegotiated
+< HTTP/1.1 200 OK
+
+< Alt-Svc: h3=":443"; ma=2592000
+
+< Content-Length: 324
+
+< Content-Type: application/json; charset=utf-8
+
+< Date: Tue, 01 Sep 2026 16:39:29 GMT
+
+< Via: 1.1 Caddy
+
+< 
+
+{ [324 bytes data]
+
+100    324 100    324   0      0   1946      0                              0
+100    324 100    324   0      0   1943      0                              0
+100    324 100    324   0      0   1941      0                              0
+* Connection #0 to host localhost:8443 left intact
+{"target_id":"2556de3a-3ac3-4832-9df7-4c919f28afa0","window_days":30,"window_start":"2026-08-02T16:00:00Z","window_end":"2026-09-01T16:00:00Z","expected_checks":8543,"success_count":1171,"failure_count":1,"unknown_count":7371,"uptime_pct":99.9146757679181,"slo_target_pct":99.9,"error_budget_consumed_pct":85.32423208190694}

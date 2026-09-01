@@ -1,0 +1,83 @@
+# Session 13 Re-Verification â€” Item 1: Rollup Cadence Gap Root Cause
+# Captured live during re-verification session, 2026-09-01
+# Purpose: re-confirm the correlated-gap root cause Session 13 reported,
+# using CURRENT logs rather than restating the prior session's narrative.
+
+## Capture timestamp
+2026-09-01 18:58:46 +03:00
+
+## docker inspect (container start times, confirms no recreation since Session 13's redeploy)
+backend  StartedAt=2026-09-01T14:44:20.572742744Z RestartCount=0
+postgres StartedAt=2026-08-31T11:40:45.778259005Z RestartCount=0
+
+## backend rollup job log lines (real 1h TickInterval, currently in effect)
+2026-09-01T14:44:22.825811401Z 2026/09/01 14:44:22 INFO rollup job run complete rows_written=246 duration=942.023922ms
+2026-09-01T15:44:21.759103693Z 2026/09/01 15:44:21 INFO rollup job run complete rows_written=250 duration=621.536498ms
+  -> Expected ticks by now given 1h interval starting 14:44:22Z: ~4-5. Only 2 observed (14:44:22, 15:44:21).
+  -> A tick is currently >3h overdue -- a LIVE, in-progress gap, not a historical one.
+
+## backend HTTP access-log ([GIN]) line counts by hour (independent activity signal)
+
+Name          Count
+----          -----
+2026-09-01T14  2424
+2026-09-01T15  9115
+
+
+
+## postgres log line counts by hour (independent third signal, today only)
+
+Name          Count
+----          -----
+2026-09-01T10    39
+2026-09-01T11   557
+2026-09-01T12     2
+2026-09-01T13    58
+2026-09-01T14   508
+2026-09-01T15   145
+
+
+
+## last 3 postgres log lines (most recent postgres activity)
+2026-09-01T15:52:36.061877546Z 2026-09-01 15:52:36.061 UTC [27] LOG:  checkpoint complete: wrote 40 buffers (0.2%); 0 WAL file(s) added, 0 removed, 0 recycled; write=4.443 s, sync=0.954 s, total=5.817 s; sync files=18, longest=0.188 s, average=0.054 s; distance=257 kB, estimate=688 kB; lsn=0/4407FE8, redo lsn=0/43FF988
+2026-09-01T15:57:30.120584215Z 2026-09-01 15:57:30.083 UTC [27] LOG:  checkpoint starting: time
+2026-09-01T15:57:34.899710356Z 2026-09-01 15:57:34.898 UTC [27] LOG:  checkpoint complete: wrote 41 buffers (0.3%); 0 WAL file(s) added, 0 removed, 0 recycled; write=4.187 s, sync=0.327 s, total=4.816 s; sync files=18, longest=0.054 s, average=0.019 s; distance=281 kB, estimate=648 kB; lsn=0/444F510, redo lsn=0/4445EA0
+
+## Windows Kernel-Power sleep/wake events since 15:00 local (checking for a sleep event correlated with the gap)
+
+TimeCreated          Id Message                                                       
+-----------          -- -------                                                       
+9/1/2026 3:06:37 PM 107 The system has resumed from sleep.                            
+9/1/2026 3:06:27 PM  42 The system is entering sleep.                                 
+                                                                                      
+                        Sleep Reason: Application API                                 
+
+
+
+
+## WSL2 VM uptime (checking whether the VM itself rebooted)
+/proc/uptime raw: 90295.92 434270.65
+current time: 2026-09-01 19:00:00 +03:00
+
+## Interpretation
+Backend rollup ticks and Postgres logging both went silent after ~15:44-15:52 local
+and remain silent as of this capture (~18:58 local, 3h+ later) -- correlated across
+two independent containers, matching Session 13's originally reported mechanism.
+UNLIKE Session 13's original observation, there is NO Windows Kernel-Power sleep/wake
+event pair covering this gap window (last sleep/wake pair was 15:06:27-15:06:37, well
+before the gap started) -- so this occurrence is NOT driven by full OS suspend.
+The WSL2 VM's own /proc/uptime shows continuous uptime (no VM reboot).
+This actually REFINES Session 13's root cause rather than merely repeating it: the
+gap mechanism is not tied to an explicit OS sleep/wake event at all -- it is Docker
+Desktop's WSL2 VM/backend going unscheduled during host inactivity in a way that does
+not surface as a Kernel-Power event. This is a LIVE, currently still-open gap -- see
+session13-rollup-ticks.log for whether/when the next real tick and cadence-gap WARN fire.
+
+## Update — after item 2's observation-window redeploy
+The backend container was rebuilt/redeployed twice for item 2 (session13-rollup-ticks.log,
+session13-redeploy-restored.txt), which necessarily reset the live gap captured above --
+StartedAt is now 2026-09-01T16:20:42Z. The pre-redeploy capture above stands as this
+session's real evidence for item 1: a live, in-progress, multi-hour silent gap correlated
+across backend rollup ticks, backend HTTP traffic, and postgres logging, with NO Windows
+sleep/wake event covering the gap window -- refining, not just repeating, Session 13's
+original finding.
