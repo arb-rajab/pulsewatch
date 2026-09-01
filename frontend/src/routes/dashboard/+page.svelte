@@ -13,6 +13,17 @@
 	function targetName(target: (typeof data.rows)[number]['target']): string {
 		return target.url ?? `${target.host}:${target.port}`;
 	}
+
+	function formatUptime(slo: (typeof data.rows)[number]['slo']): string {
+		if (!slo) return '—';
+		// A window with zero observed success-or-failure checks (e.g. a
+		// target created within the last window_days) reports 100.0 as a
+		// documented vacuous-true choice (backend/internal/operatorapi/slo.go)
+		// — surfaced here as "no data yet" instead, since "100% uptime" would
+		// overstate confidence for a target with nothing observed at all.
+		if (slo.success_count + slo.failure_count === 0) return 'no data yet';
+		return `${slo.uptime_pct.toFixed(2)}%`;
+	}
 </script>
 
 <svelte:head>
@@ -40,6 +51,7 @@
 					<th>Target</th>
 					<th>Status</th>
 					<th>Last checked</th>
+					<th>Uptime ({data.rows[0]?.slo?.window_days ?? 30}d)</th>
 				</tr>
 			</thead>
 			<tbody>
@@ -56,6 +68,13 @@
 							{/if}
 						</td>
 						<td>{row.status?.last_checked_at ?? '—'}</td>
+						<td>
+							{#if row.slo}
+								{formatUptime(row.slo)}
+							{:else}
+								<span class="badge state-error">{row.sloError}</span>
+							{/if}
+						</td>
 					</tr>
 				{/each}
 			</tbody>

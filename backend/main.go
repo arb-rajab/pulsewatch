@@ -19,6 +19,7 @@ import (
 	"github.com/arb-rajab/pulsewatch/backend/internal/alerting"
 	"github.com/arb-rajab/pulsewatch/backend/internal/operatorapi"
 	"github.com/arb-rajab/pulsewatch/backend/internal/operatorauth"
+	"github.com/arb-rajab/pulsewatch/backend/internal/rollup"
 	"github.com/arb-rajab/pulsewatch/backend/internal/scheduler"
 )
 
@@ -93,6 +94,8 @@ func run() error {
 		return fmt.Errorf("construct scheduler: %w", err)
 	}
 
+	rollupCfg := rollup.DefaultConfig()
+
 	// The agent-facing OTLP ingestion path (internal/agentapi) dispatches
 	// notifications through the identical alerting.Dispatcher/channel-key
 	// construction the scheduler builds for itself (alerting.NewLogDispatcher,
@@ -145,6 +148,17 @@ func run() error {
 		schedDoneCh <- sched.Run(ctx)
 	}()
 
+	// FR-008/NFR-005's hourly rollup job (internal/rollup, Session 12): reads
+	// check_results, writes check_rollups_hourly — the table
+	// GET /targets/{id}/slo (operatorapi.GetTargetSlo) exclusively reads
+	// from. Runs alongside the scheduler and both HTTP servers, stopping on
+	// the identical ctx cancellation; it has no lease/worker-pool state of
+	// its own to drain, so it needs no separate hard-shutdown handling.
+	rollupDoneCh := make(chan error, 1)
+	go func() {
+		rollupDoneCh <- rollup.Run(ctx, pool, rollupCfg, slog.Default())
+	}()
+
 	select {
 	case <-ctx.Done():
 		slog.Info("shutdown signal received")
@@ -169,6 +183,9 @@ func run() error {
 
 	if err := <-schedDoneCh; err != nil {
 		slog.Error("scheduler shutdown", "error", err)
+	}
+	if err := <-rollupDoneCh; err != nil {
+		slog.Error("rollup job shutdown", "error", err)
 	}
 	return nil
 }

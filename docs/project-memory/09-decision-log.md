@@ -53,3 +53,20 @@ detail.
   mass-restart, and the graceful-drain design is only safe because of
   ADR-0001's durable leasing — the two are one connected design, not two
   independent choices.
+
+## Session 12 — Hourly Rollup Job: Recompute-Everything, Not Bounded-Lookback
+- **Date:** 2026-08-31 · **Status:** accepted (not a new ADR — implements a
+  pre-aggregation decision `04-data-model.md` already made in Session 3/4) ·
+  [Full write-up](../project-memory/04-data-model.md#session-12-addendum-the-hourly-rollup-job-real-implemented)
+- **Decision:** `internal/rollup`'s hourly job recomputes and
+  `ON CONFLICT ... DO UPDATE`s every `(target, hour_bucket)` row since each
+  target's `created_at` on every tick, rather than a bounded lookback plus a
+  separate one-time backfill pass.
+- **Must not be silently reversed because:** it's what makes the job
+  self-healing for late-arriving `check_results` (an agent-reported OTLP
+  result landing after its own hour already rolled up) with no separate
+  dirty-bucket tracking table — replacing it with a bounded lookback removes
+  that self-healing property for anything outside the lookback window unless
+  a real, separate reconciliation mechanism replaces it. Revisit only
+  against measured tick duration exceeding NFR-005's 5-minute bound (this
+  session measured 350ms on real data), not by default habit.

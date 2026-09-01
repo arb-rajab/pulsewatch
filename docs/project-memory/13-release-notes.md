@@ -5,6 +5,11 @@
 
 ## Unreleased
 ### Added
+- FR-008's hourly rollup job (`internal/rollup`) computes real per-target,
+  per-hour uptime/latency aggregates into `check_rollups_hourly`; a new
+  `GET /api/v1/targets/{id}/slo` endpoint reads them into a rolling-window
+  uptime%/error-budget figure; the dashboard now shows each target's uptime
+  over the default 30-day window alongside its live status (Session 12).
 - Real, persistent TLS termination: a Caddy reverse proxy (`proxy` service
   in `docker-compose.yml`) now serves the dashboard/login flow and the API
   over `https://localhost:8443`, using a self-signed certificate from

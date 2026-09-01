@@ -293,3 +293,158 @@ are written, not a generic reversibility promise made in the abstract now.
   genuine historical value, and no FR/NFR asks for their deletion.
 - `alert_channels`: retained until the operator replaces or deletes it
   (`02-requirements.md` data classification).
+
+## Session 12 addendum: the hourly rollup job, real, implemented
+
+Everything above this section was designed in Session 3 but never
+implemented — `check_rollups_hourly` had zero rows until this session.
+Session 12's own objective was exactly this: build FR-008's hourly rollup
+job (`backend/internal/rollup`) and `GET /targets/{id}/slo`
+(`backend/internal/operatorapi/slo.go`), reading only from this table, per
+`05-api-contracts.md`'s existing "never a raw-row scan" contract. This
+section records the real decisions that implementation required.
+
+### On-demand vs. pre-aggregated: already decided, not reopened
+
+This wasn't a fresh choice Session 12 had to make — the "Rollup and
+retention strategy" section above already committed to pre-aggregation (an
+hourly Go background job) back in Session 3/4, specifically to protect the
+plain-Postgres/no-TimescaleDB decision (`00-project-brief.md` §3) from
+turning `/slo` into an expensive raw-row scan over `check_results` at read
+time. Session 12 implemented exactly that, not an on-demand alternative.
+
+### The rollup job's own internal design choice: recompute-everything, every tick
+
+Within "pre-aggregated," a real choice remained: bounded incremental
+lookback with a separate one-time backfill pass, or unconditionally
+recomputing every historical `(target, hour_bucket)` row on every tick.
+`internal/rollup.RunOnce` takes the second, simpler option — one SQL
+statement, `INSERT ... ON CONFLICT DO UPDATE`, covering every target's every
+fully-completed hour since that target's own `created_at`, run hourly
+(NFR-005's own stated cadence) plus once immediately on process startup.
+
+This is deliberately simple, not an oversight: this document's own "single
+hourly tier, not a second daily tier" reasoning above already establishes
+this project's real rollup volume as trivially small for Postgres (≤9,600
+rows/target over the full 400-day retention ceiling) — the identical
+argument extends to recomputing that whole small volume repeatedly. The
+payoff is that the job is **self-healing** for any late-arriving
+`check_results` row (an agent-reported OTLP result can genuinely arrive
+after its own hour has already been rolled up) with no separate "which
+buckets are dirty" bookkeeping table to maintain and keep correct.
+
+**Measured, not assumed:** against this instance's real data (4 real
+targets, ~2 days of continuous history, 3,412 real `check_results` rows),
+the first-ever run — a full backfill from zero, at container startup —
+wrote 181 rows in **350ms**. Comfortably inside NFR-005's ≤5-minute bound,
+with roughly 14x headroom before this specific design choice would need
+revisiting against real evidence, the same revisit-on-evidence discipline
+this document already applies to its own no-second-tier decision. If a
+future session's measured tick duration ever disagrees (i.e., the project's
+real scale grows well past `00-project-brief.md`'s stated ~5-10 targets), a
+bounded lookback plus a one-time backfill is the documented fallback design,
+not a redesign from scratch.
+
+**Correctness verified against real data, not just runtime:** cross-checked
+`SUM(success_count + failure_count)` across every `check_rollups_hourly` row
+against `count(*)` from `check_results` for every hour before the current
+in-progress one — 3,412 = 3,412, an exact match on this instance's real
+history.
+
+### The `window_days`/`slo_target_pct` scope question — resolved in favor of the existing contract
+
+Session 12's own task framing said to pick one fixed rolling window this
+session (configurability was named explicitly out of scope) — but
+`05-api-contracts.md` and the already-`@redocly/cli`-validated
+`openapi.yaml` (Session 3.5, predating Session 12) already specify
+`window_days` (default 30, range 1–400) and `slo_target_pct` (default 99.9,
+range 0–100) as **request-time query parameters** on `/targets/{id}/slo` —
+the identical "a lens applied over existing rollup data at read time, never
+stored configuration" pattern the contract already used for
+`slo_target_pct` alone.
+
+Resolved by implementing the endpoint exactly as the existing, committed
+contract specifies (both parameters, with their existing defaults and
+bounds), and satisfying "pick one fixed window" at the **dashboard call
+site** instead of the API layer: `frontend/src/routes/dashboard/+page.server.ts`
+always calls `/slo` with no query parameters (the backend's own defaults —
+30 days, 99.9%), and exposes no window picker in the UI. Reimplementing the
+backend endpoint to reject `window_days` would have meant silently
+diverging from a previously-validated, committed spec five sessions later,
+for a distinction ("a query parameter" vs. "per-target stored
+configuration") the out-of-scope note was actually drawing — not "the
+existing contract itself is now overbuilt." No stored per-target SLO
+configuration was added; none was needed.
+
+30 days (the contract's existing default) was kept rather than switching to
+this session's own illustrative "e.g. 24h" example, specifically because 30
+days was already a real, previously-reasoned decision (`05-api-contracts.md`
+Session 3.5), while 24h was only ever an example in this session's task
+framing, not a requirement — deviating from a real committed default toward
+an example for no functional reason would be change for its own sake.
+
+### `uptime_pct`/`error_budget_consumed_pct` edge cases (implementation-level, not schema-level)
+
+Two arithmetic edge cases the schema doesn't spell out, resolved in
+`operatorapi/slo.go` and covered by `slo_test.go`:
+
+- **Zero observed success-or-failure checks in the window** (e.g. a target
+  younger than the window, or a window that's entirely "unknown"):
+  `uptime_pct` reports `100.0` — vacuously true, no failure was ever
+  observed — rather than null (the schema has no null variant) or a
+  divide-by-zero. The dashboard renders this case as "no data yet" instead
+  of "100.00%", since presenting a vacuous 100% as a real, earned uptime
+  figure would overstate confidence for a target with nothing observed at
+  all.
+- **`slo_target_pct=100`** (a real, in-range request value — schema maximum
+  is 100): makes `error_budget_consumed_pct`'s denominator zero. Saturates
+  rather than emitting a JSON-illegal `Infinity`: `0` if `uptime_pct` is
+  also `100`, else `100` (budget fully consumed against an
+  infinitely-strict target).
+
+### A real finding this session's own verification surfaced: test-cleanup DB pollution, amplified
+
+Running this session's own `go test ./...` against the real, persistent
+local `docker-compose` Postgres (not CI's ephemeral per-run service
+container) left 78 orphaned test-fixture `targets` rows behind on the first
+run, visible on the real operator dashboard alongside the 4 genuine targets.
+Root cause: `check_results` (and now `check_rollups_hourly`) reference
+`targets` with a plain `REFERENCES`, deliberately not `ON DELETE CASCADE`
+(real historical data shouldn't silently vanish if a target is ever
+hard-deleted) — but several packages' test fixtures (`scheduler`,
+`agentapi`, `alerting`, and `operatorapi`'s pre-Session-12 tests) clean up
+with a best-effort `DELETE FROM targets` that silently swallows the
+resulting FK-violation error. `alerting/testdb_test.go` already documented
+this as an accepted trade-off before this session.
+
+**The full root cause took two more occurrences this session to pin down
+precisely.** It isn't only "packages whose own tests explicitly write
+`check_results`": this project's own live `pulsewatch-backend-1` container
+runs its real scheduler continuously against the same real local Postgres a
+`go test ./...` run also uses. That scheduler's 1-second tick picks up *any*
+newly-inserted `targets` row with `agent_id IS NULL` — including a
+transient fixture from a test that never itself calls check-execution code,
+like `operatorapi`'s `/status`/`/slo`/CRUD tests — and executes a real check
+against it within about a second, writing a real `check_results` row.
+Session 12's own new `check_rollups_hourly` table adds the same exposure on
+top: `internal/rollup`'s job recomputes every historical bucket on every
+tick (the design decision above), so any test-fixture target that exists at
+tick time gets a rollup row too. Session 12's own new test fixtures
+(`internal/rollup`, `operatorapi/slo_test.go`) were given "delete child rows
+before the target row" cleanup, which meaningfully reduces the exposure —
+but doesn't eliminate it, because a live scheduler/rollup tick can still
+land in the small window between a test's own non-transactional cleanup
+steps. This is why the same class of leak recurred a second and third time
+within this session even after the first fix (see `10-risk-register.md`'s
+R-005 for the full, corrected account and the real mitigation options for a
+future session: stop the local backend container before running tests,
+wrap cleanup in a transaction, or apply the ordering fix everywhere).
+
+The broader, pre-existing `check_results`/`incidents` non-cascading cleanup
+gap across other packages was **not** fixed (out of scope for this
+session's bounded objective) — see `11-backlog.md`'s B-006. The 78, then a
+further 23, then a further 4 orphaned rows created across this session's
+three test runs were each deleted from the real database after confirming,
+by `created_at`, that they were exactly this session's own test-run
+artifacts and not real or prior-session data — see this session's own
+handoff for the full before/after evidence.

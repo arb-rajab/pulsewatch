@@ -32,10 +32,29 @@ export interface TargetStatusResponse {
 	open_incident: { id: number; opened_at: string } | null;
 }
 
+// TargetSloResponse mirrors operatorapi.targetSloResponse
+// (backend/internal/operatorapi/slo.go) / openapi.yaml's TargetSlo schema
+// verbatim — this session's own new endpoint.
+export interface TargetSloResponse {
+	target_id: string;
+	window_days: number;
+	window_start: string;
+	window_end: string;
+	expected_checks: number;
+	success_count: number;
+	failure_count: number;
+	unknown_count: number;
+	uptime_pct: number;
+	slo_target_pct: number;
+	error_budget_consumed_pct: number;
+}
+
 export interface DashboardRow {
 	target: TargetResponse;
 	status: TargetStatusResponse | null;
 	statusError: string | null;
+	slo: TargetSloResponse | null;
+	sloError: string | null;
 }
 
 // load is this session's real, gated dashboard read: it never computes
@@ -65,24 +84,35 @@ export const load: PageServerLoad = async ({ cookies, fetch }) => {
 	const targets = (await listRes.json()) as TargetResponse[];
 
 	// Small, bounded scale (~5-10 targets, 05-api-contracts.md's own
-	// pagination reasoning) — one status call per target, matching
-	// openapi.yaml's per-target /status contract exactly rather than
-	// inventing a bulk endpoint the spec doesn't define.
+	// pagination reasoning) — one status call and one slo call per target,
+	// matching openapi.yaml's per-target /status and /slo contracts exactly
+	// rather than inventing a bulk endpoint the spec doesn't define.
+	//
+	// The /slo call below never passes window_days or slo_target_pct — it
+	// always takes the backend's own default (30 days, 99.9%). This is
+	// Session 12's own "pick one fixed rolling window" scope decision, made
+	// at this call site rather than in the backend contract itself: the
+	// already-validated openapi.yaml (Session 3.5) makes window_days a
+	// request-time query parameter, the same "lens over existing rollup
+	// data" pattern slo_target_pct already used — reimplementing the backend
+	// endpoint to refuse that parameter would mean silently diverging from a
+	// committed, redocly-linted spec. The dashboard simply never exposes a
+	// picker for it (see docs/project-memory/04-data-model.md's Session 12
+	// addendum for the full reasoning).
 	const rows: DashboardRow[] = await Promise.all(
 		targets.map(async (target): Promise<DashboardRow> => {
-			const statusRes = await backendFetch(
-				fetch,
-				`/api/v1/targets/${target.id}/status`,
-				sessionToken
-			);
-			if (!statusRes.ok) {
-				return { target, status: null, statusError: `status unavailable (${statusRes.status})` };
-			}
-			return {
-				target,
-				status: (await statusRes.json()) as TargetStatusResponse,
-				statusError: null
-			};
+			const [statusRes, sloRes] = await Promise.all([
+				backendFetch(fetch, `/api/v1/targets/${target.id}/status`, sessionToken),
+				backendFetch(fetch, `/api/v1/targets/${target.id}/slo`, sessionToken)
+			]);
+
+			const status = statusRes.ok ? ((await statusRes.json()) as TargetStatusResponse) : null;
+			const statusError = statusRes.ok ? null : `status unavailable (${statusRes.status})`;
+
+			const slo = sloRes.ok ? ((await sloRes.json()) as TargetSloResponse) : null;
+			const sloError = sloRes.ok ? null : `slo unavailable (${sloRes.status})`;
+
+			return { target, status, statusError, slo, sloError };
 		})
 	);
 
