@@ -28,7 +28,7 @@ func nopLogger() *slog.Logger {
 func agentSurfaceRouter(pool *pgxpool.Pool) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	agentapi.RegisterRoutes(r, pool, alerting.NewLogDispatcher(nopLogger()), testEncryptionKey, nopLogger())
+	agentapi.RegisterRoutes(r, pool, alerting.NewWebhookDispatcher(nil), testEncryptionKey, nopLogger())
 	return r
 }
 

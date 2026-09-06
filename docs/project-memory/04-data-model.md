@@ -84,6 +84,8 @@ erDiagram
         text kind "opened | resolved"
         timestamptz dispatched_at
         bool delivery_confirmed
+        smallint attempts "ADR-0006, default 1"
+        text last_error "ADR-0006, nullable — never the channel destination"
     }
     AGENTS {
         uuid id PK

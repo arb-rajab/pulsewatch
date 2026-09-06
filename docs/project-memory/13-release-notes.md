@@ -5,6 +5,20 @@
 
 ## Unreleased
 ### Added
+- Real webhook alert delivery (B-015, ADR-0006): opening or resolving an
+  incident now sends an actual `HTTP POST` to every configured `"webhook"`
+  alert channel, retried up to 3 times with exponential backoff (200ms→2s
+  cap, 5s per-attempt timeout) on transient failures (network errors,
+  5xx, 429). `alert_dispatches` gains `attempts`/`last_error` columns
+  (migration `000010`) recording exactly what was attempted, never the
+  channel's own destination. Replaces the previous `LogDispatcher` stub,
+  which never sent anything to any channel regardless of type. `"email"`
+  channels are explicitly not implemented this session — see B-014 — and
+  get an honest, recorded failure rather than silence or a false success.
+  The incident-open/close-to-dispatch wiring itself
+  (`OpenIncident`/`CloseIncident` → `scheduler`/`agentapi` →
+  `NotifyChannels`) was already built and tested before this session; this
+  change is scoped to what actually sends the notification.
 - `GET /api/v1/targets/{target_id}/incidents` (B-002): incident history for
   a target, newest first, each row carrying a derived `status`
   (`open`/`resolved`) from `closed_at`. A pure read of the `incidents`
