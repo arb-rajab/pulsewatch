@@ -1,0 +1,69 @@
+# Kubernetes equivalent of docker-compose.yml's `frontend` service. No
+# host port / LoadBalancer of its own — same reasoning as Compose's
+# `expose: 3000` comment: the browser must only ever reach this through
+# the Ingress's real TLS termination (ingress.yaml), never a plain-HTTP
+# path that would defeat the point of it.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  labels:
+    app.kubernetes.io/name: frontend
+    app.kubernetes.io/part-of: pulsewatch
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: frontend
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: frontend
+        app.kubernetes.io/part-of: pulsewatch
+    spec:
+      containers:
+        - name: frontend
+          image: pulsewatch-frontend # replaced by overlays/production/kustomization.yaml's images: field, set by rollout.sh
+          ports:
+            - containerPort: 3000
+          env:
+            - name: PUBLIC_API_URL
+              value: "http://backend-operator:8080"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+  labels:
+    app.kubernetes.io/name: frontend
+    app.kubernetes.io/part-of: pulsewatch
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: frontend
+  ports:
+    - port: 3000
+      targetPort: 3000

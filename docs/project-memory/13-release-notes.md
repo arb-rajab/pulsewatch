@@ -5,6 +5,22 @@
 
 ## Unreleased
 ### Added
+- A second, production-shaped deployment target: Kubernetes, via
+  Terraform (`infra/terraform/` — namespace, secrets, `ingress-nginx`,
+  `cert-manager`) and Kustomize-based manifests (`deploy/k8s/` — one
+  Kubernetes object per `docker-compose.yml` service, plus a
+  `rollout.sh` that enforces migrations-before-deploy ordering). Docker
+  Compose remains the documented local/dev path, unchanged. See
+  ADR-0005 and `08-deployment-and-operations.md`'s new Kubernetes
+  section for the full rollout/migration/agent-compatibility contract
+  this adds (Session 14). **Not yet verified against a live cluster** —
+  see that section's "What's not yet real," R-008, and B-009.
+- `.github/workflows/ci.yml`: a new `iac-and-k8s-manifests-validate` job
+  (offline Terraform/Kustomize validation on every push/PR) and a new
+  `publish-images` job (builds and pushes `backend`/`frontend` images to
+  GHCR on every push to `main`) — closing the "no CD pipeline publishes
+  images anywhere yet" gap for the Kubernetes target specifically
+  (Session 14).
 - The rollup job (`internal/rollup`) now logs a `WARN` whenever the real
   wall-clock gap since its previous tick exceeds `TickInterval` by more than
   10%, naming the expected interval and the actual gap — surfacing a

@@ -1,0 +1,56 @@
+# Kubernetes equivalent of docker-compose.yml's `migrate` service — same
+# image, same migrations, applied as a Job rather than a compose one-shot
+# container. Unlike Compose's `depends_on: condition:
+# service_completed_successfully` (enforced automatically by the compose
+# engine), a Kubernetes Job has no built-in way to block a Deployment
+# rollout on its own completion — deploy/k8s/rollout.sh enforces the same
+# ordering explicitly (`kubectl apply` this Job, `kubectl wait
+# --for=condition=complete`, only then apply/update the backend
+# Deployment). See ADR-0005 and 08-deployment-and-operations.md's
+# Kubernetes rollout procedure for why this is a deliberate two-phase
+# apply, not an oversight.
+#
+# A fixed name, not generateName: Kustomize requires metadata.name on every
+# resource it manages (generateName is rejected at build time). A
+# completed Job's pod template is immutable, so re-running migrations for
+# a new release means deleting this Job object and re-creating it, not
+# editing it in place — deploy/k8s/rollout.sh does exactly that
+# (`kubectl delete job --ignore-not-found` before `kubectl apply`) before
+# every rollout, so this name is safe to keep fixed across releases.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: pulsewatch-migrate
+  labels:
+    app.kubernetes.io/name: pulsewatch-migrate
+    app.kubernetes.io/part-of: pulsewatch
+spec:
+  backoffLimit: 2
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: pulsewatch-migrate
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: migrate
+          image: migrate/migrate:v4.19.1
+          args:
+            - "-path=/migrations"
+            - "-database=$(DATABASE_URL)"
+            - "up"
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: pulsewatch-app-secrets
+                  key: DATABASE_URL
+          volumeMounts:
+            - name: migrations
+              mountPath: /migrations
+              readOnly: true
+      volumes:
+        - name: migrations
+          configMap:
+            name: pulsewatch-migrations

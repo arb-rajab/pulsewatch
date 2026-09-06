@@ -28,6 +28,16 @@ frontend/vite.config.ts.timestamp-*
 # Docker
 docker-compose.override.yml
 
+# Terraform (infra/terraform — ADR-0005)
+**/.terraform/
+**/.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+*.tfvars
+!terraform.tfvars.example
+crash.log
+crash.*.log
+
 # IDE / local tooling
 .claude/
 .vscode/

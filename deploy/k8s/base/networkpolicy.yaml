@@ -1,0 +1,57 @@
+# Defense-in-depth beyond the application-layer router split (R-004): even
+# if a future code change ever re-merged operatorapi/agentapi routing by
+# mistake, or a new workload were added to this namespace, these
+# NetworkPolicies mean postgres/redis are only reachable from backend at
+# the network layer, full stop — not relying solely on application code to
+# enforce it. No default-deny-all is declared for the whole namespace:
+# that would also need an explicit allow for DNS (kube-dns) and the
+# Ingress controller's own namespace, which varies per cluster/CNI and
+# is a real footgun to get subtly wrong offline in this sandbox (a
+# misconfigured default-deny silently breaks DNS resolution, not
+# obviously so) — scoping precisely to the two data stores is the safer,
+# still-real improvement rather than reaching for the broader posture
+# without a live cluster to verify it against.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: postgres-allow-backend-and-migrate
+  labels:
+    app.kubernetes.io/part-of: pulsewatch
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: postgres
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: backend
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: pulsewatch-migrate
+      ports:
+        - protocol: TCP
+          port: 5432
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: redis-allow-backend
+  labels:
+    app.kubernetes.io/part-of: pulsewatch
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: redis
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: backend
+      ports:
+        - protocol: TCP
+          port: 6379

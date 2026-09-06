@@ -1,0 +1,15 @@
+# Non-secret backend configuration — mirrors docker-compose.yml's own
+# SCHEDULER_* defaults (ADR-0001/ADR-0004) and REDIS_URL exactly, so
+# behavior does not silently differ between the two deployment targets.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pulsewatch-backend-config
+  labels:
+    app.kubernetes.io/part-of: pulsewatch
+data:
+  REDIS_URL: "redis://redis:6379/0"
+  SCHEDULER_WORKER_POOL_SIZE: "20"
+  SCHEDULER_TICK_INTERVAL: "1s"
+  SCHEDULER_LEASE_SAFETY_MARGIN: "5s"
+  SCHEDULER_HARD_SHUTDOWN_DEADLINE: "30s"

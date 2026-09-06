@@ -164,6 +164,173 @@ a *pure* agent-transport gap — no operator-session data is reachable
 through this listener at all (R-004, closed) — tracked as R-003's own
 narrowed scope in `10-risk-register.md`.
 
+## Kubernetes (production deployment target — ADR-0005, Session 14)
+
+Additive to, not a replacement for, the Docker Compose path above — see
+ADR-0005 for the full reasoning behind adding it and
+`../adr/ADR-0005-iac-terraform-and-kubernetes-deployment.md` for the
+options considered. Files: `infra/terraform/` (platform layer) and
+`deploy/k8s/` (application workload, Kustomize-based). Each directory's
+own `README.md` has the mechanical how-to; this section is the
+design-level contract — what "safe rollout while continuing to monitor"
+actually means for this system, per `00a-ledger-confirmation.md`'s own
+justification for Release & Deployment being a deep phase.
+
+### Environments
+
+Same single-environment reality as Compose: one operator, one real
+deployment. Kubernetes does not introduce a staging/production split this
+project doesn't otherwise need — it introduces a second *kind* of
+deployment target (a real orchestrator instead of a single host running
+`docker compose`), not a second environment tier.
+
+### The rolling-update contract
+
+`deploy/k8s/base/backend.yaml`'s Deployment runs `replicas: 1` — v1 is
+still explicitly single-instance
+(`../project-memory/01-scope-and-non-goals.md`) — but `strategy:
+RollingUpdate` with `maxUnavailable: 0, maxSurge: 1` means every deploy
+briefly runs the old and new pod together (the new pod must pass its
+readiness probe before the old one is terminated). This is the exact
+overlap window ADR-0001's Postgres row-leasing was designed to survive
+from day one (that ADR's own "Restart-boundary race" and its revisit
+trigger: "if a future session ever adds a second server instance for
+real, this mechanism already generalizes without modification") — the
+Kubernetes target is the first time that design is genuinely exercised
+end-to-end rather than reasoned about, since `docker compose up --build`
+replaces a service outright and never creates this overlap.
+
+What makes this safe, concretely:
+
+- **No monitoring gap.** The old pod keeps its scheduler ticking
+  (ADR-0004) — issuing claims, executing checks, evaluating alert
+  transitions — right up until Kubernetes sends it `SIGTERM`, which only
+  happens after the new pod is `Ready`. `maxUnavailable: 0` is what
+  enforces "never below one live scheduler," matching
+  `00a-ledger-confirmation.md`'s framing that this system "must keep
+  monitoring (or fail predictably and visibly) through its own releases."
+- **No duplicate alerts, no double-checks.** Both pods' workers claim
+  against the identical `target_schedule` leasing mechanism (ADR-0001) —
+  whichever pod's worker wins a given target's lease claim executes that
+  check; the loser's claim attempt returns zero rows and is silently
+  skipped, the same routine behavior as any same-process contention.
+  Alert-suppression state (ADR-0002) is likewise Postgres-resident, not
+  per-pod in-memory state, so there is no risk of the old and new pod
+  disagreeing about whether an incident is already open.
+- **`terminationGracePeriodSeconds: 40` exceeds `SCHEDULER_HARD_SHUTDOWN_DEADLINE`'s
+  default 30s (ADR-0004)** so Kubernetes only sends `SIGKILL` after the
+  application's own graceful-drain logic has had its full, designed
+  window to finish — not a race between two independent shutdown timers
+  that happen to usually agree.
+
+### Migrations during a rolling update
+
+The real hazard a rolling update adds that a single-host restart doesn't:
+for the surge window, **old and new backend code run against the same
+schema simultaneously**. `deploy/k8s/base/migration-job.yaml` already
+enforces migrations-complete-before-new-code-starts (via
+`deploy/k8s/rollout.sh`'s two-phase apply — see that script and
+`deploy/k8s/README.md`), which handles ordering, but ordering alone does
+not make a migration safe under overlap: it only guarantees the *new*
+pod never sees a stale schema. It says nothing about whether the *old*
+pod, still running against the now-migrated schema for the duration of
+the surge, keeps working.
+
+**Migration policy for this project going forward: every migration must
+be backward-compatible with the immediately-previous backend version for
+the duration of one rolling update** (the expand/contract pattern) —
+concretely:
+
+- Adding a column: must be nullable or have a default, so the old pod's
+  `INSERT`/`UPDATE` statements (which don't know about it) keep working.
+- Renaming or dropping a column/table the old pod still reads or writes:
+  not safe in a single migration during a live rolling update — split
+  into an expand migration (this release: add the new shape alongside
+  the old) and a contract migration (a *later* release, once no pod
+  running the old code is left) instead.
+- This is a real constraint on migration authoring, not yet exercised in
+  anger — `backend/migrations/`'s existing nine migrations were all
+  written before this deployment target existed and happen to already
+  fit this pattern (each adds a new table), but no migration since has
+  been *tested* under a real overlapping-pod window (R-008,
+  `10-risk-register.md`).
+
+### Agent/server version compatibility during a rolling update
+
+ADR-0003's own design — agent-initiated, outbound-only polling (`GET
+/api/v1/agent/assignments`) and OTLP push, never a persistent server-held
+connection — is what makes this tractable at all. An agent never holds a
+connection that a backend pod's termination could sever mid-operation the
+way a long-lived TCP stream or a server-push model would; each agent
+request is a discrete, short-lived HTTP call load-balanced (by
+`backend-agent`'s Service) to whichever backend pod happens to be Ready
+at that moment, old or new. The compatibility contract this deployment
+target actually needs is therefore narrow and already how this project
+develops its API by convention: **API changes must be additive
+(new optional fields, new endpoints) for the duration of a rolling
+update** — an agent built against the previous release's assignment-list
+schema must not break when a response gains a field it doesn't recognize
+(and Go's own JSON unmarshaling into a defined struct already silently
+ignores unknown fields, so this is close to free rather than a new
+discipline to enforce). A breaking agent-facing change (removing/
+renaming a field or endpoint the agent binary depends on) needs the same
+expand/contract treatment as a breaking migration: ship the new shape
+alongside the old for one release, retire the old shape only once no
+older agent binary is expected to still be polling it.
+
+### TLS and the agent-transport gap (R-003) — narrowed further for this target
+
+`cert-manager` (`infra/terraform/main.tf`) gives the Kubernetes target a
+real, publicly-trusted Let's Encrypt certificate — the upgrade path
+Session 10 documented but never exercised for Compose's Caddy setup
+(`tls internal`'s self-signed local CA, still the Compose default above).
+`deploy/k8s/base/ingress.yaml` routes **both** the operator-facing
+(`/api`) and agent-facing (`/api/v1/agent`, `/v1/logs`) paths through this
+same Ingress and its real certificate — unlike Compose's `Caddyfile`,
+which only ever routes `/api/*` to the operator-facing listener and lets
+agent traffic reach `backend`'s separately-published, plain-HTTP host
+port directly. Session 11 explicitly considered and rejected routing
+agent traffic through Caddy for Compose, specifically because of the cost
+of distributing Caddy's self-signed local CA to every remote agent host
+(`08-deployment-and-operations.md`'s "TLS termination" section, "Why this
+option, not..."). That cost does not exist here: a real, publicly-trusted
+certificate needs no CA distributed to anyone. **This is a real,
+structural narrowing of R-003 for the Kubernetes target specifically** —
+agent bearer tokens and OTLP telemetry travel over real TLS, not
+plaintext — without touching ADR-0003's agent-facing logic at all (purely
+an Ingress-routing decision). R-003 itself stays open in `10-risk-register.md`
+because Compose's own plain-HTTP agent port is untouched and remains this
+project's documented local/dev default; the register entry is updated to
+name this narrower scope precisely.
+
+### Rollout procedure
+
+See `deploy/k8s/README.md` and `deploy/k8s/rollout.sh`'s own header
+comment for the exact commands. Summary: (1) `infra/terraform apply` once
+per cluster (idempotent thereafter — re-running it only reconciles drift,
+it does not re-run per deploy); (2) `deploy/k8s/rollout.sh <namespace>
+<backend-image> <frontend-image>` per release, which sets the image tags,
+renders the manifests, runs the migration Job to completion, then applies
+and waits on both Deployments' rollouts in order.
+
+### What's not yet real (named, not hidden)
+
+This entire Kubernetes path was authored and validated only with offline
+tooling in a sandboxed session with no outbound access to the Terraform
+provider registry and no live cluster or Docker daemon available —
+`terraform fmt -check` (HCL syntax) and a real `kubectl kustomize` build
+(base+overlay merge, image substitution, patches — confirmed correct by
+inspecting the rendered output) passed, but no `terraform apply` and no
+`kubectl apply` reaching a `Running` pod have been exercised. See R-008
+(`10-risk-register.md`) and B-009 (`11-backlog.md`) — this is the same
+honesty standard this project already held itself to for Session 10's
+untested Let's Encrypt real-domain upgrade path, applied to a larger
+surface. Backup/restore for Postgres in this target is also not yet
+built (B-011, `11-backlog.md`) — the gap named below for Compose applies
+here too, and is more load-bearing now that Kubernetes is a real
+production target rather than a documented absence on a dev-only
+deployment.
+
 ## Migration and rollback procedure
 `migrate` (image `migrate/migrate:v4.19.1`) runs `backend/migrations` against
 `postgres` on every `docker compose up`, before `backend` starts

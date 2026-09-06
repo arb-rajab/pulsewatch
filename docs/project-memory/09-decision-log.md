@@ -96,3 +96,43 @@ detail.
   Revisit if a real always-on deployment (post R-003) ever shows this
   warning firing — that would mean the mechanism is not, in fact, limited
   to dev-machine VM idling, and would need real investigation.
+
+## Session 14 — IaC/Kubernetes Scope Expansion: a Reasoned Amendment to Rule D3, Not a Silent Violation
+- **Date:** 2026-09-06 · **Status:** accepted · [Full ADR](../adr/ADR-0005-iac-terraform-and-kubernetes-deployment.md)
+- **Decision:** the project owner confirmed a supplementary technology
+  budget of two — **Terraform** and **Kubernetes** — on top of Rule D3's
+  original two-technology freeze (Go concurrency, OTel pipelines), scoped
+  strictly to the deployment layer. Terraform manages cluster-level
+  platform state (namespace, secrets, ingress controller, TLS issuer) via
+  the `hashicorp/kubernetes`/`hashicorp/helm` providers, against a
+  Kubernetes cluster the operator already controls (BYO-cluster — this
+  project does not provision cloud compute on the operator's behalf).
+  Application workload manifests are plain Kubernetes YAML composed with
+  Kustomize, applied separately from Terraform's own apply cycle, service-
+  for-service mirroring `docker-compose.yml` (Docker Compose remains the
+  documented local/dev path, not replaced).
+- **Must not be silently reversed because:** it is the only way this
+  repo's own claimed deep phases (Release & Deployment, Operations &
+  Maintenance — `00a-ledger-confirmation.md`) can demonstrate a real
+  rolling upgrade (old and new pods briefly coexisting, exactly the case
+  ADR-0001's Postgres leasing was already designed to survive) and a
+  declarative, rebuildable infrastructure story. `docker compose up
+  --build` replaces a service outright — it structurally cannot exercise
+  the overlap window ADR-0001's own revisit trigger anticipated ("if a
+  future session ever adds a second server instance for real, this
+  mechanism already generalizes without modification").
+- **Named, not hidden, limitation:** this session's own sandbox has no
+  outbound access to the Terraform provider registry and no live
+  Kubernetes cluster or Docker daemon — `terraform apply` and a real
+  `kubectl apply` reaching a `Running` pod were not exercised. What was
+  verified offline: `terraform fmt -check` (HCL syntax), a real `kubectl
+  kustomize` build (base + overlay merge, no cluster contact required),
+  and direct manifest/HCL review. Tracked as B-009 (`11-backlog.md`) —
+  real-cluster verification is the next session's actual objective, not
+  optional polish, before Kubernetes can be called this project's *proven*
+  production target rather than its documented one.
+- **Does not reopen the application-layer freeze**: TimescaleDB,
+  Prometheus/Grafana, and a message queue remain excluded from the
+  application itself, per `01-scope-and-non-goals.md`'s own (updated, not
+  deleted) non-goal row — this amendment is scoped to the deployment layer
+  only.
