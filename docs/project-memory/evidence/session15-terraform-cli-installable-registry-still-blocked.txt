@@ -1,0 +1,48 @@
+Real, precise update to Session 14's finding (this session actually
+tested it, rather than repeating the prior session's conclusion):
+
+The Terraform CLI itself IS installable this session — releases.hashicorp.com
+is reachable (200), unlike Session 14's environment:
+
+$ curl -sS -o /dev/null -w "%{http_code}\n" https://releases.hashicorp.com
+200
+$ terraform version
+Terraform v1.9.8
+on linux_amd64
+
+But `terraform init` still fails at the exact same point Session 14
+documented: registry.terraform.io itself (the provider registry, a
+different host from releases.hashicorp.com) is explicitly denied by this
+sandbox's egress policy:
+
+$ terraform init
+Initializing the backend...
+Initializing provider plugins...
+- Finding hashicorp/kubernetes versions matching "~> 2.31"...
+- Finding hashicorp/helm versions matching "~> 2.15"...
+Error: Failed to query available provider packages
+Could not retrieve the list of available versions for provider
+hashicorp/kubernetes: could not connect to registry.terraform.io: failed to
+request discovery document: Get
+"https://registry.terraform.io/.well-known/terraform.json": Forbidden
+Error: Failed to query available provider packages
+Could not retrieve the list of available versions for provider
+hashicorp/helm: could not connect to registry.terraform.io: failed to
+request discovery document: Get
+"https://registry.terraform.io/.well-known/terraform.json": Forbidden
+
+registry.terraform.io returns a bare "Forbidden" — this session's agent
+proxy separately confirms this is an explicit organization-policy CONNECT
+denial (403), not a transient network issue:
+[agent-proxy] recentRelayFailures: registry.terraform.io:443 —
+connect_rejected ("the egress proxy denied the CONNECT (organization
+policy)")
+
+Conclusion: `terraform validate`/`plan`/`apply` against this repo's real
+infra/terraform/ module remain impossible in any session using this
+egress policy, regardless of which tools happen to be installable —
+registry.terraform.io specifically, not general internet access, is the
+blocker. This is a policy decision for whoever administers the sandbox
+environment to change, not something a future session can work around
+(this session tried harder than Session 14 to find a way around it and
+confirmed there isn't one under this policy).

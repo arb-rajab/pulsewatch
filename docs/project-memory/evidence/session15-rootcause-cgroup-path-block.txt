@@ -1,0 +1,29 @@
+Isolated via `ctr run --cgroup <path>` A/B testing against this sandbox's
+containerd+runc directly (bypassing kubelet/CRI to get undistorted error
+text). Every combination tested, with outcome:
+
+  /mytest1                                  -> RUNNING (1 level)
+  /mytest2/sub                              -> RUNNING (2 levels)
+  /a/b/c                                    -> RUNNING (3 levels, generic)
+  /a/b/c/d                                  -> RUNNING (4 levels, generic)
+  /kubepods/x/y/z                           -> RUNNING ("kubepods" alone, 4 levels)
+  /x/besteffort/y/z                         -> RUNNING ("besteffort" alone, 4 levels)
+  /kubepods/besteffort/pod1/id1              -> BLOCKED (exit 137, no task; real
+                                                 kubelet-shaped path)
+  /pulsewatch/kubepods/besteffort/podX/idX   -> RUNNING (same suffix, one extra
+                                                 segment prepended)
+
+Conclusion: this sandbox's outer sandboxing intercepts/kills container
+creation specifically when the cgroup path's first two segments are
+literally "kubepods" then "besteffort" (and, separately confirmed, other
+kubelet QoS-class names in that position) *and* a new network namespace is
+attached (`--cni`) — i.e. it detects "this looks like a real Kubernetes
+pod cgroup" and blocks it, most likely because the VM this session runs in
+is itself scheduled as a pod on a real Kubernetes node, and that path
+prefix is reserved for the *host's own* kubelet.
+
+Fix applied: kubelet started with `cgroupsPerQOS: false` +
+`enforceNodeAllocatable: []`, which stops kubelet from constructing the
+kubepods/<qos-class>/pod<uid>/<container> hierarchy at all — containers get
+a flat, containerd-generated `/k8s.io/<container-id>` cgroup path instead.
+Confirmed working: see session15-first-real-pod-running.txt.

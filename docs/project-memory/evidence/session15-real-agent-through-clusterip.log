@@ -1,0 +1,22 @@
+
+Real backend/cmd/agent binary (this repo's actual reference agent, built
+with `go build`, not a stand-in) polling GET /api/v1/agent/assignments and
+posting /v1/logs against the backend-agent Service's real ClusterIP
+(kube-proxy iptables DNAT, not the pod IP directly), authenticated with a
+real bearer token from a real backend/cmd/seed-agent run against real
+Postgres. Corresponding backend-side access log:
+[GIN] 2026/09/06 - 09:03:26 | 200 | 714.529µs |      10.244.0.1 | GET      "/api/v1/agent/assignments"
+[GIN] 2026/09/06 - 09:03:27 | 200 |   1.46ms |      10.244.0.1 | POST     "/v1/logs"
+[GIN] 2026/09/06 - 09:03:28 | 200 | 747.046µs |      10.244.0.1 | GET      "/api/v1/agent/assignments"
+[GIN] 2026/09/06 - 09:03:29 | 200 | 66.036µs |      10.244.0.1 | GET      "/health"
+[GIN] 2026/09/06 - 09:03:30 | 200 | 666.465µs |      10.244.0.1 | GET      "/api/v1/agent/assignments"
+[GIN] 2026/09/06 - 09:03:32 | 200 | 712.92µs |      10.244.0.1 | GET      "/api/v1/agent/assignments"
+[GIN] 2026/09/06 - 09:03:32 | 200 |   1.62ms |      10.244.0.1 | POST     "/v1/logs"
+[GIN] 2026/09/06 - 09:03:34 | 200 | 51.255µs |      10.244.0.1 | GET      "/health"
+[GIN] 2026/09/06 - 09:03:34 | 200 | 46.134µs |      10.244.0.1 | GET      "/health"
+[GIN] 2026/09/06 - 09:03:34 | 200 | 674.321µs |      10.244.0.1 | GET      "/api/v1/agent/assignments"
+[GIN] 2026/09/06 - 09:03:36 | 200 | 684.424µs |      10.244.0.1 | GET      "/api/v1/agent/assignments"
+[GIN] 2026/09/06 - 09:03:37 | 200 |    1.9ms |      10.244.0.1 | POST     "/v1/logs"
+[GIN] 2026/09/06 - 09:03:38 | 200 | 724.064µs |      10.244.0.1 | GET      "/api/v1/agent/assignments"
+[GIN] 2026/09/06 - 09:03:39 | 200 | 49.494µs |      10.244.0.1 | GET      "/health"
+[GIN] 2026/09/06 - 09:03:40 | 200 | 715.188µs |      10.244.0.1 | GET      "/api/v1/agent/assignments"

@@ -1,0 +1,28 @@
+Real, honest negative result: NetworkPolicy objects apply cleanly to the
+real API server (schema-valid, real objects, visible via `kubectl get
+networkpolicy`), but this sandbox's minimal CNI (the reference
+`bridge`+`host-local` plugins from Ubuntu's `containernetworking-plugins`
+package — the only CNI plugins installable here without a blocked
+container-registry pull) has no NetworkPolicy dataplane. Confirmed
+directly:
+
+$ kubectl get networkpolicy -n pulsewatch
+NAME                                POD-SELECTOR                      AGE
+postgres-allow-backend-and-migrate  app.kubernetes.io/name=postgres   23m
+redis-allow-backend                 app.kubernetes.io/name=redis      23m
+
+# postgres-allow-backend-and-migrate does NOT list redis as an allowed
+# source -- only backend and pulsewatch-migrate. Real test from inside
+# redis's own network namespace:
+$ nsenter --net=<redis pod netns> -- bash -c 'echo > /dev/tcp/<postgres-pod-ip>/5432 && echo REACHED'
+REACHED
+
+Real-cluster verification confirms what ADR-0005/networkpolicy.yaml's own
+comments already assumed but could not test: NetworkPolicy enforcement is
+a property of the *CNI plugin* the operator installs, not of the
+NetworkPolicy API itself. A production BYO-cluster with a policy-capable
+CNI (Calico, Cilium, or a cloud provider's own — none of which could be
+pulled into this sandbox; see 12-session-handoff.md) will enforce these
+same, already-committed policy objects; this sandbox's minimal CNI proves
+the policies are well-formed and real, not that they are enforced
+everywhere.

@@ -52,6 +52,23 @@ spec:
               containerPort: 8080
             - name: agent
               containerPort: 8081
+          lifecycle:
+            preStop:
+              # Real-cluster verification (B-009, Session 15) measured a
+              # ~0.3-1s window of dropped connections on both Services
+              # during an otherwise-healthy RollingUpdate (maxUnavailable:
+              # 0): kube-proxy/iptables removes the terminating pod's
+              # Endpoint asynchronously with SIGTERM delivery, so a request
+              # can be routed to a pod that has already stopped accepting.
+              # This sleep is the standard fix — it delays SIGTERM just
+              # long enough for the Endpoint removal to propagate and
+              # in-flight connections to drain, before the app's own
+              # graceful-shutdown countdown (SCHEDULER_HARD_SHUTDOWN_DEADLINE)
+              # even starts. terminationGracePeriodSeconds below already
+              # accounts for this by exceeding preStop + the shutdown
+              # deadline combined.
+              exec:
+                command: ["sleep", "5"]
           envFrom:
             - secretRef:
                 name: pulsewatch-app-secrets

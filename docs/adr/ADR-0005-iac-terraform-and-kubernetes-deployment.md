@@ -216,3 +216,135 @@ addition.
   options-considered pass (a cloud VM introduces real per-provider
   credentials and cost, a materially different trade-off than "manage
   resources in a cluster the operator already pays for").
+
+## Session 15 update — real-cluster verification (B-009)
+
+Not a reopening of this ADR's Decision (Terraform for platform state,
+Kustomize for the workload, applied separately, BYO-cluster only — all
+unchanged). This is the measured evidence Session 14 could not get and
+named as the gap: a real, if minimal and self-built, single-node
+Kubernetes cluster, running in this same class of sandbox, exercising the
+committed `deploy/k8s/base/` manifests for real. Raw output for every
+claim below is saved under `docs/project-memory/evidence/session15-*` per
+`00c-evidence-preservation.md` — this section is a pointer to those files,
+not a replacement for them.
+
+**What is now proven true, not just documented:**
+
+- A real Kubernetes v1.37.0 control plane (etcd, kube-apiserver,
+  kube-controller-manager, kube-scheduler, kube-proxy, kubelet — real
+  upstream binaries, not simulated) plus real containerd + runc actually
+  schedules and runs pods on this sandbox class, once two
+  sandbox-specific blockers are worked around (both were genuinely
+  environment quirks, not Kubernetes or this repo's own bugs — see
+  `session15-rootcause-*.txt`):
+  1. This sandbox's outer sandboxing kills container creation outright
+     when a container's cgroup path starts with the literal segments
+     `kubepods/besteffort` (or any other kubelet QoS-class name in that
+     position) *and* the container joins a new network namespace — almost
+     certainly because this VM is itself scheduled as a pod on a real
+     Kubernetes host, and that path prefix is reserved for the host's own
+     kubelet. Fixed by starting kubelet with `cgroupsPerQOS: false`.
+  2. containerd's default pod-sandbox spec sets a very negative
+     `oom_score_adj` (-998, to protect the pause container), which this
+     sandbox's own resource controls reject with `Permission denied`,
+     crashing `runc`'s process bootstrap before it ever reaches
+     Kubernetes-visible logs (`can't get final child's PID from pipe:
+     EOF` — a famously vague runc error whose real cause here took
+     replaying the exact failing OCI spec directly through `runc
+     --debug` to find). Fixed via containerd's own documented escape
+     hatch for nested/restricted environments: `restrict_oom_score_adj =
+     true`.
+- `deploy/k8s/base/postgres.yaml`, `redis.yaml`, `backend.yaml`,
+  `backend-config.yaml`, `migration-job.yaml`, and
+  `networkpolicy.yaml` — the real, committed manifests, rendered with the
+  real standalone `kustomize` CLI (installable this session via `go
+  install`, closing another Session 14 gap) — applied against the real
+  API server above and reached real `Running`/`Complete` status: a real
+  Postgres 16 StatefulSet with a bound PVC, a real Redis Deployment, and a
+  real backend Deployment whose migration Job ran this repo's actual
+  `backend/migrations/*.sql` files to completion — in that order — before
+  the backend Deployment was ever applied, the same two-phase ordering
+  `deploy/k8s/rollout.sh` enforces (the script itself wasn't run
+  byte-for-byte, since it also drives a `frontend` Deployment this session
+  didn't build an image for; its Job-then-Deployment sequence was
+  reproduced with the equivalent `kubectl` calls against the same
+  rendered manifests).
+- The real `backend/cmd/agent` binary, talking through the real
+  `backend-agent` Service's ClusterIP (not the pod IP directly — real
+  kube-proxy iptables DNAT), successfully polled assignments and posted
+  logs continuously, including across three live rolling updates of the
+  backend Deployment.
+- A real rolling update (`maxUnavailable: 0`, `maxSurge: 1`) was measured,
+  not assumed: continuous 0.3s-interval health polling against both
+  backend Services during three real pod replacements recorded 6 failed
+  sub-requests out of 464 (each a single ~0.3-1s blip exactly at the
+  moment the old pod's Endpoint was removed, never a sustained gap). This
+  is a real, if small, violation of `maxUnavailable: 0`'s literal
+  zero-drop intent — root cause: kube-proxy's iptables Endpoint removal is
+  asynchronous with the terminating pod actually stopping, a well-known
+  Kubernetes characteristic, not a flaw in this repo's design. Applied the
+  standard fix — a `lifecycle.preStop: {exec: {command: ["sleep",
+  "5"]}}` on the backend container in `deploy/k8s/base/backend.yaml` — which
+  reduced the gap; a fully zero-drop guarantee at this measurement
+  precision would need a real load balancer/Ingress in front (out of
+  reach without cert-manager/ingress-nginx images, see below), so this is
+  named as a real, now-mitigated-but-not-eliminated risk rather than
+  claimed fixed.
+
+**What remains unverified, and precisely why:**
+
+- **Terraform `init`/`plan`/`apply` against `infra/terraform/`.** The
+  Terraform CLI itself is installable this session (unlike Session 14—
+  `releases.hashicorp.com` is reachable here), but `registry.terraform.io`
+  — the Terraform *provider* registry, a different host — returns an
+  explicit `403 Forbidden` organization-policy denial, both sessions. No
+  tool substitution closes this: it is a network-policy decision for
+  whoever administers the sandbox, not a capability gap. See
+  `session15-terraform-cli-installable-registry-still-blocked.txt`.
+- **cert-manager / Let's Encrypt real certificate issuance.** Not
+  attempted this session: `infra/terraform`'s `helm_release` for
+  cert-manager cannot run without the Terraform provider registry above,
+  and cert-manager's own container images (from `quay.io`) are blocked by
+  the same universal container-registry restriction documented below.
+- **NetworkPolicy enforcement.** The policy objects in
+  `networkpolicy.yaml` apply cleanly and are real, schema-valid API
+  objects — but this sandbox's only installable CNI (the reference
+  `bridge`+`host-local` plugins; anything else needs a container image)
+  has no NetworkPolicy dataplane, so they are provably *not enforced*
+  here: a pod the policy does not allow can still reach the port it
+  guards. Confirmed directly, not assumed — see
+  `session15-networkpolicy-not-enforced.txt`. A production CNI (Calico,
+  Cilium, or a cloud provider's own) is what actually enforces these
+  already-correct policies; that requires container images this sandbox
+  cannot pull (next point).
+- **Container-image registries are universally blocked at the blob layer
+  in this sandbox** — Docker Hub, GHCR, `registry.k8s.io`, `quay.io`, and
+  AWS's public ECR were all tested directly this session: every registry
+  API call (auth, manifest) succeeds, but the actual layer download
+  redirects to a CDN (`production.cloudfront.docker.com`,
+  `pkg-containers.githubusercontent.com`, etc.) that returns `403
+  Forbidden` regardless of registry. This is why every image this session
+  used (backend/agent binaries, Postgres, Redis, CoreDNS, the `migrate`
+  CLI, a minimal pause container) was built from source or from real
+  Ubuntu packages (`debootstrap` + `apt`, both of which *are* reachable)
+  rather than pulled — a real, working substitute for verifying this
+  repo's own manifests, but it means the frontend (needs `node:22-slim`
+  as a build stage — buildable the same way, just not attempted this
+  session for time) and `otel-collector` (needs the `otelcol-contrib`
+  distribution specifically, not just any OpenTelemetry Collector build)
+  were not part of this session's real-cluster proof.
+
+## Revisit triggers (added, Session 15)
+
+- If a future session's sandbox allows outbound access to
+  `registry.terraform.io` specifically (not just general internet
+  access), B-009's Terraform half becomes closeable the same way this
+  session closed the Kubernetes half.
+- If a future session's sandbox allows outbound access to any container
+  registry's blob-storage CDN (not just the registry API), re-attempt
+  with real upstream images (`postgres:16-alpine`, `redis:7-alpine`,
+  `ghcr.io/OWNER/pulsewatch-backend`, etc.) instead of this session's
+  from-source substitutes, and extend to frontend + otel-collector +
+  cert-manager + a policy-capable CNI — that would close every remaining
+  gap this section lists in one pass.

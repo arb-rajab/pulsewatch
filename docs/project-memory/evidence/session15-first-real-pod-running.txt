@@ -1,0 +1,23 @@
+Real single-node Kubernetes v1.37.0 control plane (etcd 3.4.30,
+kube-apiserver/kube-controller-manager/kube-scheduler/kubelet/kube-proxy
+v1.37.0 — all real upstream binaries from dl.k8s.io, running as bare
+processes, not containers) + real containerd v2.2.2 + runc 1.3.4 as this
+sandbox's actual container runtime. First pod scheduled and reaching
+Running:
+
+$ kubectl run test-final --image=docker.io/pulsewatch/pause:local --image-pull-policy=Never
+pod/test-final created
+
+$ kubectl get nodes
+NAME        STATUS   ROLES    AGE   VERSION
+localhost   Ready    <none>   31m   v1.37.0
+
+$ kubectl get pods -o wide
+NAME         READY   STATUS    RESTARTS   AGE   IP            NODE        NOMINATED NODE   READINESS GATES
+test-final   1/1     Running   0          8s    10.244.0.73   localhost   <none>           <none>
+
+This is the point B-009 exists to reach: not "kubectl kustomize builds
+clean" (Session 14's ceiling) but a real API server, scheduler, kubelet
+and container runtime actually running a pod, on this exact sandbox,
+after two real environment-specific blockers were root-caused and fixed
+(see session15-rootcause-*.txt).

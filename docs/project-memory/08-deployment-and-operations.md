@@ -248,12 +248,17 @@ concretely:
   into an expand migration (this release: add the new shape alongside
   the old) and a contract migration (a *later* release, once no pod
   running the old code is left) instead.
-- This is a real constraint on migration authoring, not yet exercised in
-  anger — `backend/migrations/`'s existing nine migrations were all
-  written before this deployment target existed and happen to already
-  fit this pattern (each adds a new table), but no migration since has
-  been *tested* under a real overlapping-pod window (R-008,
-  `10-risk-register.md`).
+- This is a real constraint on migration authoring. **Session 15 (B-009)
+  ran the real, two-phase ordering for real** — all nine
+  `backend/migrations/*.sql` files applied via a real `migrate` CLI Job
+  against a real Postgres 16, completing before the backend Deployment
+  was ever applied — confirming the *ordering* guarantee holds in
+  practice, not just on paper (`docs/project-memory/evidence/session15-migration-job-real-output.txt`).
+  What remains genuinely untested is a migration exercising the
+  expand/contract split itself under a real overlapping-pod window (these
+  nine migrations each only add a table, so none of them needed it) —
+  that specific scenario is still open, tracked alongside the rest of
+  B-009's narrowed remainder as B-013 (`11-backlog.md`).
 
 ### Agent/server version compatibility during a rolling update
 
@@ -315,21 +320,47 @@ and waits on both Deployments' rollouts in order.
 
 ### What's not yet real (named, not hidden)
 
-This entire Kubernetes path was authored and validated only with offline
-tooling in a sandboxed session with no outbound access to the Terraform
-provider registry and no live cluster or Docker daemon available —
-`terraform fmt -check` (HCL syntax) and a real `kubectl kustomize` build
-(base+overlay merge, image substitution, patches — confirmed correct by
-inspecting the rendered output) passed, but no `terraform apply` and no
-`kubectl apply` reaching a `Running` pod have been exercised. See R-008
-(`10-risk-register.md`) and B-009 (`11-backlog.md`) — this is the same
-honesty standard this project already held itself to for Session 10's
-untested Let's Encrypt real-domain upgrade path, applied to a larger
-surface. Backup/restore for Postgres in this target is also not yet
-built (B-011, `11-backlog.md`) — the gap named below for Compose applies
-here too, and is more load-bearing now that Kubernetes is a real
-production target rather than a documented absence on a dev-only
-deployment.
+Session 14 authored this entire Kubernetes path with offline tooling only.
+**Session 15 (B-009) closed the workload half of that gap for real**: a
+real Kubernetes v1.37.0 cluster (self-built in a sandbox of the same
+class, two sandbox-specific blockers root-caused and fixed) ran the real
+`deploy/k8s/base/` manifests — postgres, redis, backend, the migration
+Job, NetworkPolicy objects — to real `Running`/`Complete` status,
+including a real migration run and three real rolling updates with
+measured health-check continuity (see ADR-0005's Session 15 update and
+`docs/project-memory/evidence/session15-*` for the raw output behind every
+claim here).
+
+What is still not real, precisely:
+
+- **`terraform apply`.** `registry.terraform.io` (the Terraform provider
+  registry) is explicitly policy-blocked in every sandbox tested so far —
+  confirmed again, precisely, in Session 15 (the CLI itself installs
+  fine; only the provider registry is blocked). No `infra/terraform`
+  resource has ever been created against live infrastructure.
+- **cert-manager / real Let's Encrypt issuance.** Depends on the
+  `terraform apply` above (cert-manager is installed via `helm_release`)
+  — never attempted.
+- **NetworkPolicy enforcement.** The policy objects are real and
+  confirmed correct against a real API server, but Session 15 also
+  confirmed directly that this sandbox's minimal CNI does not enforce
+  them (a pod the policy disallows could still reach the port it guards).
+  A production CNI (Calico, Cilium, a cloud provider's own) is what
+  actually enforces these already-correct policies.
+- **The frontend and otel-collector images.** Session 15 built
+  postgres/redis/backend/agent/migrate images from source or real Ubuntu
+  packages to work around this sandbox's universal container-registry
+  blob-download block; the frontend (`node:22-slim`-based) and
+  otel-collector (needs the specific `otelcol-contrib` distribution)
+  images were not built this session, for time, so neither was part of
+  the real-cluster proof.
+
+See R-008 (`10-risk-register.md`) and B-013 (`11-backlog.md`, B-009's
+narrowed remainder) for the tracking. Backup/restore for Postgres in this
+target is also not yet built (B-011, `11-backlog.md`) — the gap named
+below for Compose applies here too, and is more load-bearing now that
+Kubernetes is a real, cluster-verified production target rather than a
+documented absence on a dev-only deployment.
 
 ## Migration and rollback procedure
 `migrate` (image `migrate/migrate:v4.19.1`) runs `backend/migrations` against

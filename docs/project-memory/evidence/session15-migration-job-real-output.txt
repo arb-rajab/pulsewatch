@@ -1,0 +1,14 @@
+1/u create_operators (11.245838ms)
+2/u create_agents (22.961131ms)
+3/u create_targets (33.78658ms)
+4/u create_target_schedule (44.393989ms)
+5/u create_check_results (91.717403ms)
+6/u create_check_rollups_hourly (100.281399ms)
+7/u create_incidents (110.016073ms)
+8/u create_alert_channels (117.835444ms)
+9/u create_alert_dispatches (128.268596ms)
+
+NAME                 STATUS     COMPLETIONS   DURATION   AGE
+pulsewatch-migrate   Complete   1/1           3s         13m
+
+Real golang-migrate v4.19.1 CLI (built via go install, postgres+file drivers), run as a real Kubernetes Job against real Postgres 16, applying this repo's actual backend/migrations/*.sql files via the same ConfigMap the committed deploy/k8s/base/migration-job.yaml generates.
