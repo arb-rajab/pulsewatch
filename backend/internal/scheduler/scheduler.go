@@ -18,6 +18,13 @@ import (
 // value from anything else).
 const dbOpTimeout = 5 * time.Second
 
+// dispatchTimeout bounds one NotifyChannels call: loading alert_channels
+// plus, per channel, a real webhook POST with up to alerting.WebhookDispatcher's
+// own retries and backoff (ADR-0006) — meaningfully longer than dbOpTimeout's
+// plain single-round-trip budget, since a genuinely retried delivery can
+// take several seconds by design.
+const dispatchTimeout = 20 * time.Second
+
 // Scheduler runs ADR-0001's claim/release lease cycle on ADR-0004's bounded
 // worker pool, evaluating ADR-0002's alert-suppression state machine and
 // dispatching notifications after every release.
@@ -38,8 +45,9 @@ type Scheduler struct {
 
 // New constructs a Scheduler against the given pool. It starts no
 // goroutines — call Run for that. The dispatcher defaults to
-// alerting.LogDispatcher (this session's clearly-labeled stub, no real
-// webhook/email/SMS provider) — override it with SetDispatcher.
+// alerting.WebhookDispatcher (ADR-0006: a real HTTP POST with retry/backoff
+// for "webhook" channels; "email" channels are reported as not implemented
+// this session, never silently dropped) — override it with SetDispatcher.
 func New(pool *pgxpool.Pool, cfg Config, logger *slog.Logger) (*Scheduler, error) {
 	owner, err := newOwnerID()
 	if err != nil {
@@ -61,7 +69,7 @@ func New(pool *pgxpool.Pool, cfg Config, logger *slog.Logger) (*Scheduler, error
 		ownerID:    owner,
 		jobs:       make(chan CheckJob, cfg.WorkerPoolSize),
 		logger:     logger,
-		dispatcher: alerting.NewLogDispatcher(logger),
+		dispatcher: alerting.NewWebhookDispatcher(nil),
 		channelKey: channelKey,
 	}, nil
 }
@@ -71,7 +79,7 @@ func New(pool *pgxpool.Pool, cfg Config, logger *slog.Logger) (*Scheduler, error
 // gauge of currently-held leases per process).
 func (s *Scheduler) OwnerID() string { return s.ownerID }
 
-// SetDispatcher overrides the default stub LogDispatcher. Exists for tests
+// SetDispatcher overrides the default WebhookDispatcher. Exists for tests
 // that need to observe dispatch calls directly rather than only via
 // alert_dispatches rows and log output; a future session wiring in a real
 // notification provider would call this too.
@@ -237,7 +245,7 @@ func (s *Scheduler) handleJob(drainCtx context.Context, job CheckJob) {
 	// conditional incidents write actually returned a row — dispatchReq is
 	// nil on every other tick (no state change, or a Suspect-zone blip).
 	if dispatchReq != nil {
-		dispatchCtx, dispatchCancel := context.WithTimeout(drainCtx, dbOpTimeout)
+		dispatchCtx, dispatchCancel := context.WithTimeout(drainCtx, dispatchTimeout)
 		alerting.NotifyChannels(dispatchCtx, s.pool, s.dispatcher, s.channelKey, *dispatchReq, s.logger)
 		dispatchCancel()
 	}

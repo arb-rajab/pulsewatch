@@ -1,8 +1,14 @@
 package alerting
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"fmt"
+	"io"
 	"log/slog"
+	"net/http"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -18,62 +24,265 @@ type DispatchRequest struct {
 	Kind       string // "opened" | "resolved"
 }
 
-// Dispatcher sends one notification for one channel. The only
-// implementation this session ships is LogDispatcher — a clearly-labeled
-// stub, matching this portfolio's established stub-tier pattern
-// (bookslot/lexicon): no real webhook/email/SMS provider integration is in
-// this session's scope (ADR-0002 Consequences explicitly leaves delivery
-// mechanism to Implementation). A real provider is a drop-in Dispatcher
-// implementation for a later session — nothing above this interface needs
-// to change for that.
+// DispatchOutcome is what a Dispatcher reports back to NotifyChannels after
+// attempting (and, for WebhookDispatcher, possibly retrying) one
+// notification for one channel — ADR-0006's delivery-status shape,
+// persisted verbatim into alert_dispatches.attempts/last_error. Confirmed
+// mirrors the old delivery_confirmed column exactly; Attempts and LastError
+// are new, additive visibility into what the dispatcher actually did to
+// reach that verdict.
+type DispatchOutcome struct {
+	Confirmed bool
+	Attempts  int
+	// LastError is empty when Confirmed is true. Never contains a channel's
+	// destination (FR-023) — every Dispatcher implementation in this package
+	// is required to keep that guarantee itself, not rely on the caller to
+	// scrub it.
+	LastError string
+}
+
+// Dispatcher sends one notification for one channel. WebhookDispatcher is
+// the only real implementation this package ships (ADR-0006): a genuine
+// HTTP POST with retry/backoff for channel.Type == "webhook". Any other
+// channel type (currently just "email") is reported back as not
+// implemented rather than silently pretending success — see
+// WebhookDispatcher.Dispatch.
 type Dispatcher interface {
-	Dispatch(ctx context.Context, channel Channel, req DispatchRequest) error
+	Dispatch(ctx context.Context, channel Channel, req DispatchRequest) DispatchOutcome
 }
 
-// LogDispatcher is this session's stub notification sender: it logs that a
-// notification would be sent, and to which channel (by id/type only), and
-// nothing more.
-//
-// FR-023's credential-handling contract is enforced even against this
-// stub: channel.destination is never logged, never included in the log
-// line below, even though LoadChannels decrypted it — exactly as a real
-// provider integration would have to. This proves the decrypt path is real
-// and exercised end-to-end, not that the secret would be safe to print if a
-// real provider replaced this stub.
-type LogDispatcher struct {
-	logger *slog.Logger
+// webhookPayload is the JSON body POSTed to a webhook channel's
+// destination. Deliberately small and stable: an incident id, its target,
+// which edge transition this is, and when this attempt was sent — enough
+// for a receiver to correlate against GET /targets/{id}/incidents without
+// this repo inventing a larger notification schema than FR-013 asks for.
+type webhookPayload struct {
+	Kind       string    `json:"kind"`
+	IncidentID int64     `json:"incident_id"`
+	TargetID   string    `json:"target_id"`
+	SentAt     time.Time `json:"sent_at"`
 }
 
-// NewLogDispatcher constructs the stub dispatcher. A nil logger falls back
-// to slog.Default(), matching scheduler.New's own convention.
-func NewLogDispatcher(logger *slog.Logger) *LogDispatcher {
-	if logger == nil {
-		logger = slog.Default()
+// Default retry policy — ADR-0006. Three attempts total (one original plus
+// two retries), exponential backoff starting at 200ms, each individual HTTP
+// attempt bounded to 5s. Deliberately conservative: this is a single
+// operator's own webhook (Slack/PagerDuty/etc.), not a multi-tenant fan-out,
+// so a few seconds of total latency on a real outage notification is an
+// acceptable trade for not giving up after one transient blip.
+const (
+	defaultMaxAttempts       = 3
+	defaultBackoffBase       = 200 * time.Millisecond
+	defaultBackoffMax        = 2 * time.Second
+	defaultPerAttemptTimeout = 5 * time.Second
+)
+
+// WebhookDispatcher is ADR-0006's real Dispatcher: an actual HTTP POST to a
+// webhook channel's decrypted destination, retried with exponential backoff
+// on transient failures. Every field has a zero-value-safe default (see
+// NewWebhookDispatcher) so tests can override just what they need to (a
+// faster backoff, a fixed clock) without reconstructing the whole thing.
+type WebhookDispatcher struct {
+	// Client sends the actual HTTP request. Per-attempt timeout is applied
+	// via context, not Client.Timeout, so one shared client can't leak a
+	// timeout tuned for a different dispatcher's attempts.
+	Client *http.Client
+	// MaxAttempts is the total number of HTTP attempts (including the
+	// first), not the number of retries. <= 0 means defaultMaxAttempts.
+	MaxAttempts int
+	// BackoffBase is the delay before the second attempt; each subsequent
+	// delay doubles, capped at BackoffMax. <= 0 means defaultBackoffBase.
+	BackoffBase time.Duration
+	// BackoffMax caps the computed backoff delay. <= 0 means
+	// defaultBackoffMax.
+	BackoffMax time.Duration
+	// PerAttemptTimeout bounds a single HTTP round-trip. <= 0 means
+	// defaultPerAttemptTimeout.
+	PerAttemptTimeout time.Duration
+}
+
+// NewWebhookDispatcher constructs the real dispatcher with this package's
+// default retry policy. A nil client falls back to a plain &http.Client{} —
+// per-attempt timeouts are applied per-request via context, so the client
+// itself needs no Timeout of its own.
+func NewWebhookDispatcher(client *http.Client) *WebhookDispatcher {
+	if client == nil {
+		client = &http.Client{}
 	}
-	return &LogDispatcher{logger: logger}
+	return &WebhookDispatcher{Client: client}
 }
 
-// Dispatch implements Dispatcher — see LogDispatcher's own doc comment for
-// what it logs and, deliberately, what it never logs.
-func (d *LogDispatcher) Dispatch(_ context.Context, channel Channel, req DispatchRequest) error {
-	d.logger.Info("stub alert dispatch — no real notification provider configured this session",
-		"kind", req.Kind, "incident_id", req.IncidentID, "target_id", req.TargetID,
-		"channel_id", channel.ID, "channel_type", channel.Type)
+func (d *WebhookDispatcher) maxAttempts() int {
+	if d.MaxAttempts > 0 {
+		return d.MaxAttempts
+	}
+	return defaultMaxAttempts
+}
+
+func (d *WebhookDispatcher) backoffBase() time.Duration {
+	if d.BackoffBase > 0 {
+		return d.BackoffBase
+	}
+	return defaultBackoffBase
+}
+
+func (d *WebhookDispatcher) backoffMax() time.Duration {
+	if d.BackoffMax > 0 {
+		return d.BackoffMax
+	}
+	return defaultBackoffMax
+}
+
+func (d *WebhookDispatcher) perAttemptTimeout() time.Duration {
+	if d.PerAttemptTimeout > 0 {
+		return d.PerAttemptTimeout
+	}
+	return defaultPerAttemptTimeout
+}
+
+// backoffDelay computes the delay before retry number n (1-indexed: the
+// delay before the 2nd overall attempt is backoffDelay(base, maxDelay, 1)),
+// doubling each time and capped at maxDelay.
+func backoffDelay(base, maxDelay time.Duration, n int) time.Duration {
+	delay := base
+	for i := 1; i < n; i++ {
+		delay *= 2
+		if delay >= maxDelay {
+			return maxDelay
+		}
+	}
+	if delay > maxDelay {
+		return maxDelay
+	}
+	return delay
+}
+
+// webhookAttemptError classifies one failed HTTP attempt without ever
+// carrying the channel's destination (FR-023) — every message this type can
+// produce is a fixed string or an HTTP status code, nothing derived from
+// the request itself.
+type webhookAttemptError struct {
+	kind       string // "malformed" | "transport" | "status"
+	statusCode int
+}
+
+func (e *webhookAttemptError) Error() string {
+	switch e.kind {
+	case "status":
+		return fmt.Sprintf("webhook POST returned status %d", e.statusCode)
+	case "malformed":
+		return "webhook destination is not a valid HTTP(S) URL"
+	default:
+		return "webhook POST transport error"
+	}
+}
+
+// retryable reports whether another attempt could plausibly succeed. A
+// malformed destination never will (it's a configuration error, not a
+// transient one); a 4xx other than 429 means the receiver rejected this
+// request specifically and a byte-for-byte retry won't change that; every
+// other case (network failure, timeout, 429, 5xx) is worth retrying.
+func (e *webhookAttemptError) retryable() bool {
+	switch e.kind {
+	case "malformed":
+		return false
+	case "status":
+		return e.statusCode == http.StatusTooManyRequests || e.statusCode >= 500
+	default:
+		return true
+	}
+}
+
+// Dispatch implements Dispatcher. For channel.Type == "webhook" it performs
+// a real HTTP POST of webhookPayload, retrying transient failures per this
+// dispatcher's backoff policy (ADR-0006). Any other channel type is
+// reported back as not implemented this session (email, FR-014, is
+// explicitly out of scope — see ADR-0006) rather than silently claiming
+// success or silently doing nothing.
+func (d *WebhookDispatcher) Dispatch(ctx context.Context, channel Channel, req DispatchRequest) DispatchOutcome {
+	if channel.Type != "webhook" {
+		return DispatchOutcome{
+			Confirmed: false,
+			Attempts:  1,
+			LastError: fmt.Sprintf("%s channel delivery is not implemented this session (ADR-0006)", channel.Type),
+		}
+	}
+
+	payload, err := json.Marshal(webhookPayload{
+		Kind:       req.Kind,
+		IncidentID: req.IncidentID,
+		TargetID:   req.TargetID,
+		SentAt:     time.Now().UTC(),
+	})
+	if err != nil {
+		// Not a destination problem — every field here is our own data, so
+		// this can't leak a secret. Still never retryable: the payload
+		// won't change shape on a retry.
+		return DispatchOutcome{Confirmed: false, Attempts: 1, LastError: "encode webhook payload: " + err.Error()}
+	}
+
+	maxAttempts := d.maxAttempts()
+	var lastErr *webhookAttemptError
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		if attempt > 1 {
+			delay := backoffDelay(d.backoffBase(), d.backoffMax(), attempt-1)
+			select {
+			case <-ctx.Done():
+				return DispatchOutcome{Confirmed: false, Attempts: attempt - 1, LastError: lastErr.Error()}
+			case <-time.After(delay):
+			}
+		}
+
+		attemptErr := d.attemptOnce(ctx, channel.destination, payload)
+		if attemptErr == nil {
+			return DispatchOutcome{Confirmed: true, Attempts: attempt}
+		}
+		lastErr = attemptErr
+		if !attemptErr.retryable() {
+			return DispatchOutcome{Confirmed: false, Attempts: attempt, LastError: attemptErr.Error()}
+		}
+	}
+	return DispatchOutcome{Confirmed: false, Attempts: maxAttempts, LastError: lastErr.Error()}
+}
+
+// attemptOnce performs exactly one HTTP POST attempt, bounded by this
+// dispatcher's PerAttemptTimeout. Every returned error is a
+// *webhookAttemptError — never a raw net/http error, which for a bad URL
+// can embed the URL itself (the channel's secret destination, FR-023) in
+// its own Error() string.
+func (d *WebhookDispatcher) attemptOnce(ctx context.Context, destination string, payload []byte) *webhookAttemptError {
+	attemptCtx, cancel := context.WithTimeout(ctx, d.perAttemptTimeout())
+	defer cancel()
+
+	httpReq, err := http.NewRequestWithContext(attemptCtx, http.MethodPost, destination, bytes.NewReader(payload))
+	if err != nil {
+		return &webhookAttemptError{kind: "malformed"}
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	resp, err := d.Client.Do(httpReq)
+	if err != nil {
+		return &webhookAttemptError{kind: "transport"}
+	}
+	defer func() { _ = resp.Body.Close() }()
+	_, _ = io.Copy(io.Discard, resp.Body) // drain so the connection can be reused
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return &webhookAttemptError{kind: "status", statusCode: resp.StatusCode}
+	}
 	return nil
 }
 
 // NotifyChannels loads every configured channel, hands the request to
-// dispatcher for each, and records one alert_dispatches row per attempt —
-// "record of each attempted notification, for exactly-once verification and
-// debugging" (04-data-model.md). Zero configured channels is not an error:
-// the incidents row is still the durable record of the transition
-// (ADR-0002) — there is simply nowhere to notify yet, since no
-// channel-registration API exists this session.
+// dispatcher for each, and records one alert_dispatches row per attempted
+// notification — "record of each attempted notification, for
+// exactly-once verification and debugging" (04-data-model.md). Zero
+// configured channels is not an error: the incidents row is still the
+// durable record of the transition (ADR-0002) — there is simply nowhere to
+// notify yet, since no channel-registration API exists this session.
 //
-// delivery_confirmed reflects only whether dispatcher.Dispatch itself
-// reported success — for the stub, that means the log write succeeded, not
-// that any real party received anything. A real provider Dispatcher would
-// give this column its intended meaning without any change here.
+// delivery_confirmed/attempts/last_error reflect exactly what dispatcher
+// reported (DispatchOutcome) — for WebhookDispatcher, that means a real
+// HTTP 2xx was received, not just that a log write succeeded.
 func NotifyChannels(ctx context.Context, pool *pgxpool.Pool, dispatcher Dispatcher, key []byte, req DispatchRequest, logger *slog.Logger) {
 	channels, err := LoadChannels(ctx, pool, key)
 	if err != nil {
@@ -82,16 +291,19 @@ func NotifyChannels(ctx context.Context, pool *pgxpool.Pool, dispatcher Dispatch
 	}
 
 	for _, channel := range channels {
-		dispatchErr := dispatcher.Dispatch(ctx, channel, req)
-		confirmed := dispatchErr == nil
-		if dispatchErr != nil {
-			logger.Error("dispatch alert", "error", dispatchErr, "incident_id", req.IncidentID, "channel_id", channel.ID)
+		outcome := dispatcher.Dispatch(ctx, channel, req)
+		if outcome.Confirmed {
+			logger.Info("alert dispatched", "kind", req.Kind, "incident_id", req.IncidentID,
+				"channel_id", channel.ID, "channel_type", channel.Type, "attempts", outcome.Attempts)
+		} else {
+			logger.Error("dispatch alert", "error", outcome.LastError, "incident_id", req.IncidentID,
+				"channel_id", channel.ID, "channel_type", channel.Type, "attempts", outcome.Attempts)
 		}
 
 		const insertDispatch = `
-INSERT INTO alert_dispatches (incident_id, alert_channel_id, kind, delivery_confirmed)
-VALUES ($1, $2::uuid, $3, $4)`
-		if _, execErr := pool.Exec(ctx, insertDispatch, req.IncidentID, channel.ID, req.Kind, confirmed); execErr != nil {
+INSERT INTO alert_dispatches (incident_id, alert_channel_id, kind, delivery_confirmed, attempts, last_error)
+VALUES ($1, $2::uuid, $3, $4, $5, NULLIF($6, ''))`
+		if _, execErr := pool.Exec(ctx, insertDispatch, req.IncidentID, channel.ID, req.Kind, outcome.Confirmed, outcome.Attempts, outcome.LastError); execErr != nil {
 			logger.Error("record alert_dispatches row", "error", execErr, "incident_id", req.IncidentID, "channel_id", channel.ID)
 		}
 	}

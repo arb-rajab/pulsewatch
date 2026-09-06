@@ -3,8 +3,12 @@ package alerting
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -45,12 +49,29 @@ INSERT INTO alert_channels (type, destination_encrypted) VALUES ($1, $2) RETURNI
 	return channelID
 }
 
+// fetchDispatchRow reads back the one alert_dispatches row this test's
+// channel/incident pair produced, for asserting on delivery_confirmed/
+// attempts/last_error (ADR-0006).
+func fetchDispatchRow(t *testing.T, pool *pgxpool.Pool, incidentID int64, channelID string) (confirmed bool, attempts int, lastError string) {
+	t.Helper()
+	var lastErr *string
+	err := pool.QueryRow(t.Context(), `
+SELECT delivery_confirmed, attempts, last_error FROM alert_dispatches
+WHERE incident_id = $1 AND alert_channel_id = $2::uuid`,
+		incidentID, channelID,
+	).Scan(&confirmed, &attempts, &lastErr)
+	if err != nil {
+		t.Fatalf("fetch alert_dispatches row for channel %s: %v", channelID, err)
+	}
+	if lastErr != nil {
+		lastError = *lastErr
+	}
+	return confirmed, attempts, lastError
+}
+
 // TestLoadChannels_DecryptsConfiguredChannel proves LoadChannels' one real
 // job: read a channel's encrypted destination and hand back the correct
-// plaintext. Scoped to the specific channel this test created (search the
-// result for its id) rather than asserting on the returned slice's length —
-// alert_channels is a global table shared with whatever else this session's
-// suite leaves behind, so "exactly N rows" is not a safe assertion here.
+// plaintext.
 func TestLoadChannels_DecryptsConfiguredChannel(t *testing.T) {
 	pool := testPool(t)
 	const destination = "https://hooks.example.invalid/T00/B00/load-channels-test-token"
@@ -79,19 +100,42 @@ func TestLoadChannels_DecryptsConfiguredChannel(t *testing.T) {
 	}
 }
 
-// TestNotifyChannels_DispatchesRecordsDeliveryAndNeverLogsPlaintext is the
-// FR-023-against-the-stub proof this session's scope requires: NotifyChannels
-// decrypts a real channel's destination (LoadChannels) and hands it to a
-// real Dispatcher (LogDispatcher) — but the plaintext destination must never
-// appear in anything LogDispatcher writes, even though decrypting it was
-// real, not skipped. Also proves the alert_dispatches bookkeeping row is
-// written with the right kind/channel/delivery_confirmed.
-func TestNotifyChannels_DispatchesRecordsDeliveryAndNeverLogsPlaintext(t *testing.T) {
+// fastDispatcher returns a WebhookDispatcher tuned for tests: real retry
+// logic, but backoff scaled down to milliseconds so retry tests don't spend
+// real wall-clock seconds waiting out ADR-0006's production backoff.
+func fastDispatcher() *WebhookDispatcher {
+	return &WebhookDispatcher{
+		Client:            &http.Client{},
+		MaxAttempts:       3,
+		BackoffBase:       5 * time.Millisecond,
+		BackoffMax:        20 * time.Millisecond,
+		PerAttemptTimeout: 2 * time.Second,
+	}
+}
+
+// TestNotifyChannels_WebhookDeliversRecordsAttemptAndNeverLogsDestination is
+// the FR-023-plus-ADR-0006 proof this session's real webhook delivery
+// requires: NotifyChannels decrypts a real channel's destination
+// (LoadChannels), a real WebhookDispatcher POSTs to it (a real
+// httptest.Server, not a fake), the server's 200 is what makes
+// delivery_confirmed true — but the destination itself (here, the server's
+// own URL, standing in for a real webhook URL that might embed a bearer
+// token) must never appear in any log line NotifyChannels or the
+// dispatcher produce.
+func TestNotifyChannels_WebhookDeliversRecordsAttemptAndNeverLogsDestination(t *testing.T) {
 	pool := testPool(t)
 	targetID := insertTestTargetRow(t, pool)
 
-	const secretDestination = "https://hooks.example.invalid/T00/B00/must-never-appear-in-logs"
-	channelID := insertTestAlertChannel(t, pool, "webhook", secretDestination)
+	var received webhookPayload
+	var gotContentType string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotContentType = r.Header.Get("Content-Type")
+		_ = json.NewDecoder(r.Body).Decode(&received)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	channelID := insertTestAlertChannel(t, pool, "webhook", srv.URL)
 
 	req, err := OpenIncident(t.Context(), pool, targetID)
 	if err != nil {
@@ -104,26 +148,197 @@ func TestNotifyChannels_DispatchesRecordsDeliveryAndNeverLogsPlaintext(t *testin
 	var logBuf bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&logBuf, nil))
 
-	NotifyChannels(t.Context(), pool, NewLogDispatcher(logger), testEncryptionKey, *req, logger)
+	NotifyChannels(t.Context(), pool, fastDispatcher(), testEncryptionKey, *req, logger)
 
-	if strings.Contains(logBuf.String(), secretDestination) {
-		t.Fatalf("FR-023 violation: plaintext destination appeared in dispatch logs:\n%s", logBuf.String())
+	if strings.Contains(logBuf.String(), srv.URL) {
+		t.Fatalf("FR-023 violation: channel destination appeared in dispatch logs:\n%s", logBuf.String())
 	}
 
-	var kind string
-	var confirmed bool
-	err = pool.QueryRow(t.Context(), `
-SELECT kind, delivery_confirmed FROM alert_dispatches
-WHERE incident_id = $1 AND alert_channel_id = $2::uuid`,
-		req.IncidentID, channelID,
-	).Scan(&kind, &confirmed)
-	if err != nil {
-		t.Fatalf("fetch alert_dispatches row for channel %s: %v", channelID, err)
+	if gotContentType != "application/json" {
+		t.Fatalf("expected Content-Type: application/json, got %q", gotContentType)
 	}
-	if kind != "opened" {
-		t.Fatalf("expected kind=opened, got %q", kind)
+	if received.Kind != "opened" || received.IncidentID != req.IncidentID || received.TargetID != targetID {
+		t.Fatalf("unexpected webhook payload received by test server: %+v", received)
 	}
+
+	confirmed, attempts, lastError := fetchDispatchRow(t, pool, req.IncidentID, channelID)
 	if !confirmed {
-		t.Fatal("expected delivery_confirmed=true: the stub's Dispatch call returned no error")
+		t.Fatalf("expected delivery_confirmed=true: the test server returned 200 (last_error=%q)", lastError)
+	}
+	if attempts != 1 {
+		t.Fatalf("expected attempts=1 for an immediate success, got %d", attempts)
+	}
+	if lastError != "" {
+		t.Fatalf("expected no last_error on a confirmed delivery, got %q", lastError)
+	}
+}
+
+// TestWebhookDispatcher_RetriesTransientFailureThenSucceeds proves the
+// actual retry/backoff behavior ADR-0006 commits to: a channel whose
+// endpoint fails twice (a real 500 response, not a simulated error) then
+// succeeds on the third attempt is recorded as confirmed, with attempts=3 —
+// the retry genuinely happened, driven through NotifyChannels end to end,
+// not asserted against WebhookDispatcher.Dispatch in isolation.
+func TestWebhookDispatcher_RetriesTransientFailureThenSucceeds(t *testing.T) {
+	pool := testPool(t)
+	targetID := insertTestTargetRow(t, pool)
+
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		n := calls.Add(1)
+		if n < 3 {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	channelID := insertTestAlertChannel(t, pool, "webhook", srv.URL)
+
+	req, err := OpenIncident(t.Context(), pool, targetID)
+	if err != nil {
+		t.Fatalf("OpenIncident (setup): %v", err)
+	}
+	if req == nil {
+		t.Fatal("OpenIncident (setup): expected a dispatch request")
+	}
+
+	logger := slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil))
+	NotifyChannels(t.Context(), pool, fastDispatcher(), testEncryptionKey, *req, logger)
+
+	if got := calls.Load(); got != 3 {
+		t.Fatalf("expected exactly 3 HTTP attempts against the test server, got %d", got)
+	}
+
+	confirmed, attempts, lastError := fetchDispatchRow(t, pool, req.IncidentID, channelID)
+	if !confirmed {
+		t.Fatalf("expected delivery_confirmed=true after the 3rd attempt succeeded (last_error=%q)", lastError)
+	}
+	if attempts != 3 {
+		t.Fatalf("expected attempts=3 (2 failures then a success), got %d", attempts)
+	}
+}
+
+// TestWebhookDispatcher_PermanentFailureRecordsUnconfirmedWithError proves
+// the give-up path: an endpoint that always fails exhausts every retry,
+// alert_dispatches ends up with delivery_confirmed=false, attempts equal to
+// the configured max, and a non-empty last_error describing the HTTP status
+// — never the destination itself (FR-023).
+func TestWebhookDispatcher_PermanentFailureRecordsUnconfirmedWithError(t *testing.T) {
+	pool := testPool(t)
+	targetID := insertTestTargetRow(t, pool)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	channelID := insertTestAlertChannel(t, pool, "webhook", srv.URL)
+
+	req, err := OpenIncident(t.Context(), pool, targetID)
+	if err != nil {
+		t.Fatalf("OpenIncident (setup): %v", err)
+	}
+	if req == nil {
+		t.Fatal("OpenIncident (setup): expected a dispatch request")
+	}
+
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logBuf, nil))
+	dispatcher := fastDispatcher()
+	NotifyChannels(t.Context(), pool, dispatcher, testEncryptionKey, *req, logger)
+
+	confirmed, attempts, lastError := fetchDispatchRow(t, pool, req.IncidentID, channelID)
+	if confirmed {
+		t.Fatal("expected delivery_confirmed=false: every attempt returned 500")
+	}
+	if attempts != dispatcher.MaxAttempts {
+		t.Fatalf("expected attempts=%d (every configured attempt exhausted), got %d", dispatcher.MaxAttempts, attempts)
+	}
+	if lastError == "" {
+		t.Fatal("expected a non-empty last_error describing the failure")
+	}
+	if strings.Contains(lastError, srv.URL) {
+		t.Fatalf("FR-023 violation: destination leaked into last_error: %q", lastError)
+	}
+	if strings.Contains(logBuf.String(), srv.URL) {
+		t.Fatalf("FR-023 violation: destination leaked into logs:\n%s", logBuf.String())
+	}
+}
+
+// TestWebhookDispatcher_NonRetryableStatusStopsImmediately proves that a
+// 4xx (other than 429) is treated as a permanent rejection, not retried —
+// attempts stays at 1 rather than climbing to MaxAttempts, and the server
+// only ever sees one request.
+func TestWebhookDispatcher_NonRetryableStatusStopsImmediately(t *testing.T) {
+	pool := testPool(t)
+	targetID := insertTestTargetRow(t, pool)
+
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		w.WriteHeader(http.StatusBadRequest)
+	}))
+	defer srv.Close()
+
+	channelID := insertTestAlertChannel(t, pool, "webhook", srv.URL)
+
+	req, err := OpenIncident(t.Context(), pool, targetID)
+	if err != nil {
+		t.Fatalf("OpenIncident (setup): %v", err)
+	}
+	if req == nil {
+		t.Fatal("OpenIncident (setup): expected a dispatch request")
+	}
+
+	logger := slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil))
+	NotifyChannels(t.Context(), pool, fastDispatcher(), testEncryptionKey, *req, logger)
+
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("expected exactly 1 HTTP attempt for a non-retryable 400, got %d", got)
+	}
+
+	confirmed, attempts, lastError := fetchDispatchRow(t, pool, req.IncidentID, channelID)
+	if confirmed {
+		t.Fatal("expected delivery_confirmed=false for a 400 response")
+	}
+	if attempts != 1 {
+		t.Fatalf("expected attempts=1 (no retry for a non-retryable status), got %d", attempts)
+	}
+	if lastError == "" {
+		t.Fatal("expected a non-empty last_error")
+	}
+}
+
+// TestNotifyChannels_EmailChannelReportedNotImplemented proves ADR-0006's
+// explicit scope boundary: an "email" channel is never silently dropped or
+// falsely confirmed — it comes back unconfirmed with a last_error saying
+// plainly that email delivery isn't built this session.
+func TestNotifyChannels_EmailChannelReportedNotImplemented(t *testing.T) {
+	pool := testPool(t)
+	targetID := insertTestTargetRow(t, pool)
+	channelID := insertTestAlertChannel(t, pool, "email", "ops@example.invalid")
+
+	req, err := OpenIncident(t.Context(), pool, targetID)
+	if err != nil {
+		t.Fatalf("OpenIncident (setup): %v", err)
+	}
+	if req == nil {
+		t.Fatal("OpenIncident (setup): expected a dispatch request")
+	}
+
+	logger := slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil))
+	NotifyChannels(t.Context(), pool, fastDispatcher(), testEncryptionKey, *req, logger)
+
+	confirmed, attempts, lastError := fetchDispatchRow(t, pool, req.IncidentID, channelID)
+	if confirmed {
+		t.Fatal("expected delivery_confirmed=false: email delivery is not implemented this session")
+	}
+	if attempts != 1 {
+		t.Fatalf("expected attempts=1 (not implemented is not retried), got %d", attempts)
+	}
+	if !strings.Contains(lastError, "not implemented") {
+		t.Fatalf("expected last_error to say email is not implemented, got %q", lastError)
 	}
 }

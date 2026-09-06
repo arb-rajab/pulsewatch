@@ -1,7 +1,7 @@
 # Decision Log
 > Purpose: why things are the way they are, so decisions are not silently undone
 > Project: pulsewatch (public)
-> Last updated: 2026-09-01 (Session 13)
+> Last updated: 2026-09-06 (Session 17)
 
 Full reasoning for each ADR lives in `docs/adr/`. This log is the
 short-form index — read it first, open the linked ADR for the trade-off
@@ -187,3 +187,29 @@ detail.
 - **Evidence saved as files, not just narrated** — this project's own
   established practice (`00c-evidence-preservation.md`), followed here
   for every claim above: `docs/project-memory/evidence/session15-*`.
+
+## ADR-0006 — Webhook Dispatch: Real Delivery, Retry Policy, and Idempotency
+- **Date:** 2026-09-06 · **Status:** accepted · [Full ADR](../adr/ADR-0006-webhook-dispatch-delivery-semantics.md)
+- **Decision:** `WebhookDispatcher` (real `HTTP POST`, retried in-process up
+  to 3 times with exponential backoff, 200ms→2s cap, 5s per-attempt
+  timeout) replaces `LogDispatcher` as the default `Dispatcher` for
+  `"webhook"` channels. No async outbox/retry-queue table — retries happen
+  synchronously inside the same `Dispatch` call `NotifyChannels` already
+  makes, so `alert_dispatches` keeps its existing one-row-per-attempted-
+  notification shape (two new columns, `attempts`/`last_error`, migration
+  `000010`). `"email"` channels are reported back as not implemented this
+  session, never silently dropped or falsely confirmed.
+- **Must not be silently reversed because:** it's what makes ADR-0002's
+  already-guaranteed "exactly one dispatch attempt per edge transition"
+  land somewhere real for a webhook channel — before this, every channel
+  type, `LogDispatcher`, delivered nothing regardless of the guarantee
+  gating it. Reverting to a log-only stub without a real replacement would
+  silently regress FR-013 (webhook notification) to a no-op again.
+- **Before writing any code, this session read `dispatch.go`/`channel.go`
+  directly** (per `12-session-handoff.md`'s own instruction) and confirmed
+  the incident-to-dispatch wiring (`scheduler.handleJob`,
+  `agentapi.processCheckResult` → `alerting.NotifyChannels`) was already
+  built and already tested — the only real gap was `LogDispatcher` itself
+  never touching a channel's decrypted destination. This session's actual
+  scope was narrower than "wire dispatch into the incident state machine,"
+  because that wiring already existed.

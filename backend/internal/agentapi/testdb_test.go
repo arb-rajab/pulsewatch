@@ -214,11 +214,11 @@ type spyCall struct {
 	req       alerting.DispatchRequest
 }
 
-func (s *spyDispatcher) Dispatch(_ context.Context, channel alerting.Channel, req alerting.DispatchRequest) error {
+func (s *spyDispatcher) Dispatch(_ context.Context, channel alerting.Channel, req alerting.DispatchRequest) alerting.DispatchOutcome {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.calls = append(s.calls, spyCall{channelID: channel.ID, req: req})
-	return nil
+	return alerting.DispatchOutcome{Confirmed: true, Attempts: 1}
 }
 
 func (s *spyDispatcher) callsFor(channelID string) []alerting.DispatchRequest {

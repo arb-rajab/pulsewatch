@@ -98,11 +98,11 @@ func run() error {
 
 	// The agent-facing OTLP ingestion path (internal/agentapi) dispatches
 	// notifications through the identical alerting.Dispatcher/channel-key
-	// construction the scheduler builds for itself (alerting.NewLogDispatcher,
+	// construction the scheduler builds for itself (alerting.NewWebhookDispatcher,
 	// alerting.EncryptionKeyFromEnv) — two independent, deterministic reads
 	// of the same environment, not a shared mutable dependency, so no
 	// coupling to the scheduler package is needed here.
-	dispatcher := alerting.NewLogDispatcher(slog.Default())
+	dispatcher := alerting.NewWebhookDispatcher(nil)
 	channelKey, keyErr := alerting.EncryptionKeyFromEnv()
 	if keyErr != nil {
 		slog.Warn("ALERT_CHANNEL_ENCRYPTION_KEY not configured; agent-reported alert dispatch will be skipped if any alert_channels row exists", "error", keyErr)
