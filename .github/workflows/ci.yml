@@ -57,10 +57,19 @@ jobs:
           DATABASE_URL: postgres://pulsewatch:pulsewatch@localhost:5432/pulsewatch?sslmode=disable
         run: migrate -path=./migrations -database="$DATABASE_URL" up
 
+      # R-002 (10-risk-register.md): cross-package concurrent-load
+      # contention against one shared Postgres has caused
+      # TestCountOperators_ReflectsRealRows/TestRecordCheckResult_*
+      # flakes since Session 7, previously assumed (wrongly, per this
+      # PR's own CI run — see R-002's Session 14 update) not to reproduce
+      # against CI's ephemeral per-run Postgres. `-p 1` (serialize package
+      # test binaries) has reliably avoided it twice locally (Session 7,
+      # Session 12); applying it here makes that the permanent CI default
+      # rather than leaving CI exposed to a known, already-diagnosed flake.
       - name: go test
         env:
           DATABASE_URL: postgres://pulsewatch:pulsewatch@localhost:5432/pulsewatch?sslmode=disable
-        run: go test ./... -race -v
+        run: go test ./... -race -v -p 1
 
       - name: govulncheck
         run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
