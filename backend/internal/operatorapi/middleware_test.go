@@ -37,6 +37,8 @@ func TestEveryOperatorFacingEndpoint_RejectsUnauthenticatedRequests(t *testing.T
 		{http.MethodPatch, "/api/v1/targets/" + placeholderID, []byte(`{}`)},
 		{http.MethodDelete, "/api/v1/targets/" + placeholderID, nil},
 		{http.MethodGet, "/api/v1/targets/" + placeholderID + "/status", nil},
+		{http.MethodGet, "/api/v1/targets/" + placeholderID + "/slo", nil},
+		{http.MethodGet, "/api/v1/targets/" + placeholderID + "/incidents", nil},
 
 		{http.MethodPost, "/api/v1/alert-channels", []byte(`{}`)},
 		{http.MethodGet, "/api/v1/alert-channels", nil},
