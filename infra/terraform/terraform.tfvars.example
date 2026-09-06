@@ -1,0 +1,17 @@
+# Copy to terraform.tfvars and fill in real values. Never commit
+# terraform.tfvars itself — it holds real secrets (see .gitignore).
+
+kubeconfig_path  = "~/.kube/config"
+kube_context     = "" # empty = current context
+namespace        = "pulsewatch"
+
+acme_email       = "you@example.com"
+ingress_hostname = "pulsewatch.example.com"
+use_staging_acme = true # flip to false only once DNS + ingress are confirmed working end-to-end
+
+postgres_user     = "pulsewatch"
+postgres_password = "" # generate with: openssl rand -base64 24
+postgres_db       = "pulsewatch"
+
+session_signing_secret       = "" # generate with: openssl rand -base64 32
+alert_channel_encryption_key = "" # optional — generate with: openssl rand -base64 32 if you have alert channels configured

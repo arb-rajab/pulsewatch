@@ -147,3 +147,70 @@ jobs:
       - uses: github/codeql-action/analyze@v4
         with:
           category: "/language:${{ matrix.language }}"
+
+  # ADR-0005 (Session 14): offline validation of the two new deployment-
+  # layer additions. Neither step needs a live cluster or cloud
+  # credentials — `terraform fmt` is pure HCL syntax/formatting, and
+  # `kubectl kustomize` performs a real base+overlay build (image
+  # substitution, patches, ConfigMap generation) without contacting an
+  # API server. Real `terraform apply`/`kubectl apply` against a live
+  # cluster remain out of CI's reach (R-008, 10-risk-register.md; B-009,
+  # 11-backlog.md) — this job catches syntax/structural regressions only.
+  iac-and-k8s-manifests-validate:
+    name: Terraform fmt + Kubernetes manifest build (offline)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - name: terraform fmt -check
+        working-directory: infra/terraform
+        run: terraform fmt -check -diff -recursive
+
+      - name: kubectl kustomize build (production overlay)
+        run: >-
+          kubectl kustomize --load-restrictor LoadRestrictionsNone
+          deploy/k8s/overlays/production
+          > /dev/null
+
+  # Builds and pushes real, pullable images for deploy/k8s/rollout.sh to
+  # deploy — 08-deployment-and-operations.md's own Compose section already
+  # names "no CD pipeline publishes images anywhere yet" as a real, named
+  # gap; this closes it for the Kubernetes target specifically. Gated on
+  # both application CI jobs and on push to main only — a PR branch's
+  # untested image is never published.
+  publish-images:
+    name: Publish backend/frontend images to GHCR
+    runs-on: ubuntu-latest
+    needs: [backend, frontend]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/pulsewatch-backend:latest
+            ghcr.io/${{ github.repository_owner }}/pulsewatch-backend:${{ github.sha }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/pulsewatch-frontend:latest
+            ghcr.io/${{ github.repository_owner }}/pulsewatch-frontend:${{ github.sha }}

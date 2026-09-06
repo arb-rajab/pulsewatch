@@ -1,0 +1,47 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+
+# rollout.sh overwrites the two `newTag` values below (via `kustomize edit
+# set image`) with the real, just-built image digest/tag before every
+# apply — the values committed here are placeholders, not real images.
+images:
+  - name: pulsewatch-backend
+    newName: ghcr.io/OWNER/pulsewatch-backend
+    newTag: latest
+  - name: pulsewatch-frontend
+    newName: ghcr.io/OWNER/pulsewatch-frontend
+    newTag: latest
+
+patches:
+  # Real ingress hostname — must match infra/terraform/terraform.tfvars's
+  # own ingress_hostname, or cert-manager's HTTP-01 challenge will request
+  # a certificate for a name this Ingress doesn't actually answer for.
+  # Edit both occurrences below before applying (see README.md).
+  - target:
+      kind: Ingress
+      name: pulsewatch
+    patch: |-
+      - op: replace
+        path: /spec/tls/0/hosts/0
+        value: pulsewatch.example.com
+      - op: replace
+        path: /spec/rules/0/host
+        value: pulsewatch.example.com
+
+  # Production sizing: base's requests/limits are dev-shaped minimums.
+  # Bump backend memory only (the one component actually holding
+  # in-memory worker-pool/scheduler state, ADR-0004) — postgres/redis/
+  # frontend/otel-collector stay at base's defaults, matching this
+  # project's own "sized against ~5-10 targets, not generic web scale"
+  # framing (03-architecture.md) rather than padding every limit
+  # speculatively.
+  - target:
+      kind: Deployment
+      name: backend
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/memory
+        value: 512Mi

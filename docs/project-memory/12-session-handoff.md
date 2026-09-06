@@ -1,54 +1,5 @@
 # Session Handoff
 
-## Re-verification pass (2026-09-01, same day as Session 13)
-
-Session 13's own claims for items 1 (rollup cadence root cause), 2 (the
-extended-observation window), and 3 (the real, non-mock auth capture) had
-been narrated accurately in this file but were **not backed by any
-retrievable raw artifact** — the underlying containers had been recreated
-after the fact, so there was nothing left to point to. A dedicated
-re-verification pass re-ran all three and this time persisted the actual
-raw output as it was captured, under `docs/project-memory/evidence/`:
-
-- **Item 1 (rollup cadence root cause) — re-confirmed and refined, not
-  merely repeated.** A fresh live gap was caught in progress (not
-  historical): rollup ticks and `pulsewatch-postgres-1`'s own logging both
-  went silent after ~15:44–15:52 and were still silent ~3h later at capture
-  time, correlated across both containers exactly as originally reported —
-  but this time with **no** `Microsoft-Windows-Kernel-Power` sleep/wake
-  event covering the gap window at all, meaning the mechanism isn't tied to
-  an explicit OS sleep event the way the original write-up implied. Raw
-  evidence: `docs/project-memory/evidence/session13-logs.txt`.
-- **Item 2 (extended-observation window) — re-run live, artifact is the
-  real stream.** `TickInterval` lowered to 20s
-  (`session13-tickinterval-diff-lowered.txt`), backend rebuilt/redeployed
-  (`session13-build-lowered.txt`, `session13-redeploy-lowered.txt`), real
-  log output redirected live to a file as the job ran
-  (`docs/project-memory/evidence/session13-rollup-ticks.log`) — 11
-  consecutive real ticks at ~20s cadence (16:08:32–16:11:52), zero
-  cadence-gap WARNs. Reverted (`session13-tickinterval-diff-restored.txt`
-  — empty diff, confirming byte-identical to committed `main.go`), rebuilt
-  (`session13-build-restored.txt`), redeployed, real post-restore startup
-  tick captured (`session13-redeploy-restored.txt`).
-- **Item 3 (real auth capture) — re-run live with a fresh credential
-  reset.** The prior session's reset password wasn't preserved anywhere
-  retrievable, so a new one was generated via the same documented
-  break-glass path, named and confirmed with the user first
-  (`session13-pw-reset-output.txt`). Real login → real `/slo` (separate TLS
-  connection) → real dashboard render, all captured live via
-  `curl -v ... | Tee-Object` as the requests happened:
-  `docs/project-memory/evidence/session13-auth-capture.txt` (login +
-  `/slo`), `session13-dashboard-capture.txt` (dashboard HTML, `99.91%`
-  uptime matching the `/slo` response verbatim in both the rendered table
-  and the hydration data island). Throwaway reset tool
-  (`backend/cmd/_verify_resetpw`) and the session cookie jar were deleted
-  after use, consistent with Session 12/13's own precedent.
-
-No R-005 recurrence this pass (no `go test` was run; `targets` count
-confirmed still exactly 4 real rows throughout). See
-`00c-evidence-preservation.md` for why this pass was needed and the
-practice change it prompted.
-
 ## Project
 - Repository: `pulsewatch`
 - Public or private: public (flagship)
@@ -56,425 +7,430 @@ practice change it prompted.
 - Current version or branch: `main` (unreleased, pre-v0.1.0)
 
 ## Session completed
-- Session number and title: **Session 13 — Rollup Job Stall, Real Auth Capture, New Flake.**
-- Objective: three bounded, evidence-driven tasks surfaced by a real
-  evidence-gathering pass after Session 12's own handoff overclaimed two
-  things — root-cause and fix the rollup job's apparent stall; obtain a
-  real, non-mock authenticated `/slo` + dashboard capture (Session 12's own
-  capture used a session minted directly via `operatorauth.IssueSession`,
-  bypassing the real operator's actual password, and was explicitly labeled
-  mock for the parts that needed a real login); and log a newly-surfaced
-  test flake, distinct from R-002.
-- Status: **complete**, with an important correction to the task's own
-  framing — see "Real bugs found" below. The rollup job was never actually
-  broken; the flake was real-reproduced (including reproducing under
-  `go test -p 1`, unlike R-002); the real auth capture is real.
+
+- Session number and title: **Session 14 — IaC/Kubernetes Scope Expansion:
+  ADR-0005, Terraform Platform Layer, Kubernetes Deployment Path.**
+- Objective: the project owner confirmed a deliberate, reasoned expansion
+  of this repo's frozen technology budget (Rule D3,
+  `00a-ledger-confirmation.md`) to add Terraform and Kubernetes as a real
+  second, production-shaped deployment target — giving this repo's own
+  claimed deep phases (Release & Deployment, Operations & Maintenance)
+  a real rolling-upgrade and declarative-infrastructure story that Docker
+  Compose alone structurally cannot demonstrate. Document the decision as
+  a proper ADR (not a silent violation of the freeze), update the
+  non-goals ledger accordingly, and build the actual Terraform module and
+  Kubernetes manifests — not just describe them.
+- Status: **complete for what this sandbox could do — explicitly,
+  honestly incomplete for real-cluster verification.** Every file is
+  written and validated with every offline tool available (`terraform
+  fmt`, a real `kubectl kustomize` build, direct manifest inspection).
+  No `terraform apply` or `kubectl apply` against live infrastructure was
+  possible: this session's sandbox has no outbound access to
+  `registry.terraform.io` (confirmed: `connect_rejected` via the egress
+  proxy), no Docker daemon (`docker info` fails to reach one), and no
+  `kubectl`/`helm`/`terraform` were even installed at session start
+  (`terraform` and `kubectl` were installed via direct binary download;
+  `helm` could not be — `get.helm.sh` and `github.com` releases were both
+  blocked by the same egress policy, which is exactly why the Kubernetes
+  workload layer uses plain manifests + Kustomize instead of a Helm chart
+  that could never have been `helm lint`-verified in this environment).
+
+## Correcting the task brief this session started from
+
+The task description handed to this session claimed the repo was at
+"Session 4 complete... no monitoring logic, agent code, or alerting
+exists yet" and asked to confirm Session 5's scheduler/leasing scope
+before continuing. **That was stale.** `git log` and every
+`docs/project-memory/` file at session start showed Sessions 1–13 already
+complete and pushed to `main`: scheduler/leasing (ADR-0001, Session 5),
+alert-suppression (ADR-0002, Session 6), the agent (ADR-0003, Session 7),
+operator auth (Session 8), the dashboard (Session 9), real TLS (Session
+10), the router-split fix (Session 11, R-004), the SLO/rollup job
+(Session 12), and a rollup-cadence/real-auth-capture verification pass
+(Session 13). This session picked up from the real state (Session 13's
+own handoff, next-recommended-session list, and the project owner's
+explicit new instruction) rather than re-deriving Session 5's own
+already-shipped, already-tested scheduler design from scratch.
 
 ## Work completed
 
-### `backend/internal/rollup/rollup.go` (edited)
-Added `cadenceGapExceeded` and wired it into `Run`'s tick loop: when the
-real wall-clock gap since the previous tick exceeds `TickInterval` by more
-than 10%, logs `WARN "rollup job cadence gap exceeded expected interval —
-check_rollups_hourly was stale until this run"` with the expected interval
-and the actual gap. This is **not** a fix for the originally-reported
-symptom in the sense of making the job tick more reliably — see "Real bugs
-found" below for why no such fix exists or is needed. It makes a
-previously-silent cadence violation observable.
+### `docs/adr/ADR-0005-iac-terraform-and-kubernetes-deployment.md` (new)
+Full options-considered ADR: why Compose-only or hand-applied Kubernetes
+manifests are insufficient for this repo's own deep-phase claims, why
+Terraform authoring every workload object directly was rejected (mixes
+infrequently-changing platform state with per-release image-tag
+churn), and why the chosen split — Terraform for platform/cluster state,
+Kustomize-based plain manifests for the application workload, applied
+separately — is the right shape. Names the sandbox's inability to
+`terraform apply`/`kubectl apply` against live infrastructure explicitly,
+with what *was* verified and how.
 
-### `backend/internal/rollup/cadence_test.go` (new)
-`TestCadenceGapExceeded`: five cases (on-time, small jitter under load,
-just under/over the 10% tolerance, and the real 13h33m gap observed on this
-machine) against the new threshold function, deterministic, no DB needed.
+### `docs/project-memory/01-scope-and-non-goals.md` (edited)
+The "a third new technology" non-goal row is annotated (not deleted) with
+a pointer to ADR-0005: the application-layer freeze (no TimescaleDB,
+Prometheus/Grafana, message queue) stays fully in force; the deployment
+layer gets a named, reasoned supplementary budget of two (Terraform,
+Kubernetes).
 
-### `docs/project-memory/09-decision-log.md`, `10-risk-register.md`, `11-backlog.md`, `13-release-notes.md` (edited)
-New Session 13 decision-log entry (why visibility logging, not a forced-tick
-workaround); new R-006 (rollup cadence gaps — root cause, evidence, fix) and
-R-007 (the new scheduler flake) in the risk register; R-005 updated with
-this session's own recurrence evidence; new B-007 backlog item (operator
-password-reset tooling gap, found while doing Part 2); a real "Added" entry
-in release notes.
+### `docs/project-memory/09-decision-log.md` (edited)
+New Session 14 entry, short-form index pointing at ADR-0005, stating
+plainly that this is an amendment to Rule D3 the project owner confirmed,
+not scope creep discovered after the fact.
 
-### `backend/cmd/_verify_resetpw` (created, then deleted before this diff was finalized)
-A throwaway tool, matching Session 12's own `_verify_mintcookie` precedent:
-reset the one real operator's password via the project's own documented
-break-glass path (`operatorauth.HashPassword` + a direct `UPDATE operators`)
-so a real `POST /auth/login` could be captured. Named and confirmed with the
-user before running (see "Decisions made"). Not present in this session's
-final diff.
+### `docs/project-memory/10-risk-register.md` (edited)
+- New **R-008**: the offline-only validation gap (no live cluster/
+  registry access in this sandbox) — open, next review Session 15.
+- **R-003** narrowed further: still open for Docker Compose exactly as
+  before, but the Kubernetes target's Ingress now routes agent traffic
+  through the same real, `cert-manager`-issued TLS certificate the
+  operator dashboard uses (impossible to do this safely for Compose's
+  Caddy setup without the CA-distribution cost Session 11 explicitly
+  named and rejected — a real public cert has no such cost).
 
-### No other backend/frontend code changed
-`04-data-model.md`, `openapi.yaml`, the schema, the scheduler, alerting,
-agent, and operator-auth packages are all untouched — this session's actual
-code change is the single `cadenceGapExceeded` addition described above.
+### `docs/project-memory/11-backlog.md` (edited)
+New **B-009** (real-cluster verification — the next session's actual
+objective), **B-010** (a cloud-VM-plus-k3s bootstrap module, deliberately
+out of ADR-0005's own BYO-cluster scope), **B-011** (Postgres backup/
+restore for the Kubernetes target), **B-012** (a real, pre-existing gap
+discovered this session: `06-security-threat-model.md` and
+`07-testing-strategy.md` are empty section-header skeletons beyond what
+this session added to each — not caused by this session, but surfaced by
+it).
+
+### `docs/project-memory/08-deployment-and-operations.md` (edited)
+New "Kubernetes (production deployment target)" section: the
+rolling-update contract and why ADR-0001's leasing design makes the
+old/new-pod overlap window safe; a real migration policy (expand/
+contract, backward-compatible-for-one-release) for the first time this
+project's migrations must actually survive concurrent old/new backend
+code, not just a restart boundary; the agent/server compatibility
+contract during a rolling update (ADR-0003's agent-initiated polling
+model is what makes this tractable); the TLS/R-003 narrowing; the rollout
+procedure; and an explicit "what's not yet real" section.
+
+### `docs/project-memory/06-security-threat-model.md`, `07-testing-strategy.md` (edited)
+Both were empty skeletons (section headers, no content) before this
+session — a real, pre-existing gap this session did not create but did
+discover while trying to add its own scoped content. Added: a Secrets
+management section (Kubernetes/Terraform secrets handling, explicitly
+scoped to this session's own work, with the broader file gap named as
+B-012 rather than silently left unremarked); a CI quality-gate section
+covering the new offline validation job and its real limits.
+
+### `infra/terraform/` (new)
+`versions.tf`, `variables.tf`, `main.tf`, `outputs.tf`,
+`terraform.tfvars.example`, `README.md`. Creates the `pulsewatch`
+namespace, a `Secret` mirroring `.env.example`'s own required/optional
+values one-for-one, `ingress-nginx` and `cert-manager` via `helm_release`,
+and a Let's Encrypt `ClusterIssuer` (defaults to the ACME **staging**
+server so a first real apply can't accidentally burn a production
+rate-limit slot). BYO-cluster only — does not provision cloud compute
+(ADR-0005's Decision; B-010 tracks the alternative). Verified with
+`terraform fmt -check -diff -recursive` (clean). `terraform validate`
+could not run — no registry access to install the `kubernetes`/`helm`
+provider plugins this config requires (`registry.terraform.io`:
+`connect_rejected`).
+
+### `deploy/k8s/` (new)
+`base/` (Namespace-less — namespace comes from Terraform — Deployments/
+Services for `backend` [two Services, `backend-operator`/`backend-agent`,
+matching R-004's router split rather than collapsing it], `frontend`,
+`redis`, `otel-collector`; a `StatefulSet` + headless Service for
+`postgres`; a `Job` for migrations; an `Ingress`; two `NetworkPolicy`
+objects restricting Postgres/Redis ingress to `backend` only) and
+`overlays/production/` (image-tag placeholders `rollout.sh` sets per
+release, an Ingress-hostname patch, a production memory-limit patch).
+`rollout.sh` enforces migration-Job-then-Deployments ordering (a
+Kubernetes Job has no equivalent of Compose's `depends_on: condition:
+service_completed_successfully`). `README.md` per directory.
+
+**Verified for real, offline:** `kubectl kustomize --load-restrictor
+LoadRestrictionsNone deploy/k8s/overlays/production` builds successfully
+— 18 real Kubernetes objects rendered. Inspected directly (not just "it
+didn't error"): image substitution applied correctly
+(`ghcr.io/OWNER/pulsewatch-backend:latest` etc.), the two
+`configMapGenerator`-produced ConfigMaps' hash-suffixed names were
+correctly rewritten in both the `otel-collector` Deployment's and the
+migration `Job`'s volume references, the production memory-limit patch
+and the Ingress-hostname patch both applied, and every Service/Deployment
+selector stayed scoped to exactly `app.kubernetes.io/name` (the
+kustomization's `labels` transformer did not leak into selector matching,
+confirmed by direct inspection — a real, specific thing that could have
+silently broken cross-object matching if `includeSelectors` had defaulted
+differently). `--load-restrictor LoadRestrictionsNone` is required and
+documented: the kustomization deliberately references
+`../../../backend/migrations/*.sql` and
+`../../../otel-collector-config.yaml` from outside `deploy/k8s/` so the
+two deployment targets can never silently drift out of sync, which
+Kustomize's default path-traversal guard otherwise blocks.
+
+**Not verified — named, not hidden:** no live cluster exists in this
+sandbox, so no `kubectl apply` ever reached a real API server, no pod
+ever reached `Running`, and `rollout.sh`'s dependency on the *standalone*
+`kustomize` CLI (`kustomize edit set image` — distinct from `kubectl
+kustomize`, which has no `edit` subcommand) was never exercised, since
+that binary could not be installed either (same blocked `github.com`
+release path as `helm`). `bash -n deploy/k8s/rollout.sh` confirms syntax
+only.
+
+### `.github/workflows/ci.yml` (edited)
+New `iac-and-k8s-manifests-validate` job (the same two offline checks
+above, now gating every push/PR) and new `publish-images` job (builds and
+pushes `backend`/`frontend` to GHCR on push to `main` only, gated on the
+existing `backend`/`frontend` test jobs) — closing
+`08-deployment-and-operations.md`'s own previously-named "no CD pipeline
+publishes images anywhere yet" gap for the Kubernetes target
+specifically. Verified: `python3 -c "yaml.safe_load(...)"` parses
+cleanly; job structure reviewed directly (not executed — this session has
+no way to trigger a real GitHub Actions run).
+
+### `docs/project-memory/13-release-notes.md`, `.gitignore` (edited)
+Release notes gain an "Unreleased/Added" entry for both new CI jobs and
+the Kubernetes deployment target itself, with the "not yet verified
+against a live cluster" caveat repeated rather than left implicit.
+`.gitignore` gains Terraform state/cache/`*.tfvars` exclusions (with
+`terraform.tfvars.example` explicitly un-ignored).
 
 ## Decisions made
 
-- **The rollup job was not broken, and no "fix" that changes its ticking
-  behavior was made.** The task's own framing assumed a job-specific bug
-  ("silently stopped ticking... no error, no crash, no restart"). Real
-  investigation (see "Real bugs found") showed the entire container/VM goes
-  unscheduled for extended stretches on this developer's own machine, not
-  that `rollup.Run`'s goroutine died — confirmed by identical simultaneous
-  silent gaps in `pulsewatch-postgres-1`'s own logs and in
-  `pulsewatch-backend-1`'s *entire* HTTP traffic, not just rollup logging.
-  A `time.Ticker` physically cannot fire while its process isn't being
-  scheduled; there is no code fix for that. Getting user confirmation
-  before scoping a fix (rather than inventing a workaround like periodic
-  restarts) surfaced the right-sized fix: visibility logging only. Full
-  reasoning in `09-decision-log.md`'s new Session 13 entry.
-- **Reset the one real operator's password via the documented break-glass
-  path, after naming it and getting explicit confirmation first** (per
-  Session 11's own closeout standing instruction on state-changing
-  actions). `provision-operator` refuses to run once an operator exists,
-  and this project has no reset/rotate tool — its own doc comment already
-  named direct DB access as the accepted gap. A throwaway
-  `backend/cmd/_verify_resetpw` (matching Session 12's own
-  `_verify_mintcookie` precedent) computed a bcrypt hash for a freshly
-  generated password and wrote it directly, then was deleted before this
-  session's diff was finalized.
-- **R-005 (test-fixture DB pollution) recurred multiple times during Part
-  3's investigation and was named, confirmed, and cleaned up transactionally
-  each time**, per the standing ground rule — see "Real bugs found" below
-  for the actual counts. Confirmed this is not a one-off — it is exactly
-  the mechanism R-005 already documents, still fully open, tracked as
-  B-006.
-- **Did not attempt to root-cause R-007 (the new flake) beyond what real
-  evidence this session could gather**, exactly as the task's own scope
-  allowed ("fixing it outright is optional this session — logging it
-  accurately is not"). Did not touch R-002's own existing flakes.
+- **Terraform owns platform state; Kustomize-based plain manifests own
+  the application workload; the two are applied separately, never in one
+  `terraform apply`.** Chosen specifically because per-release image-tag
+  changes (the routine case) would otherwise force a full Terraform
+  plan/apply cycle against provider-managed state for what Kubernetes
+  itself treats as a one-line change — see ADR-0005's Option C for the
+  full rejection reasoning.
+- **BYO-cluster, not a cloud-VM-provisioning module.** Matches this
+  project's own "agents run on infrastructure the operator controls"
+  business assumption (`00-project-brief.md`) and avoids inventing real
+  per-cloud-provider credentials/cost this session had no way to test
+  against anyway. B-010 tracks the alternative as a distinct,
+  separately-scoped future decision.
+- **Helm was not used for the application workload, specifically because
+  this sandbox could not install the `helm` binary to verify a chart with
+  `helm lint`/`helm template`.** Plain Kustomize manifests were chosen in
+  part *because* they could be genuinely validated offline
+  (`kubectl kustomize`, bundled in the already-available `kubectl`) —
+  this is a real, stated reason for the technical choice, not merely an
+  ADR footnote. Terraform *does* still use Helm (`helm_release` resources
+  for `ingress-nginx`/`cert-manager`) since that layer's correctness could
+  not be verified offline either way (no provider registry access), so
+  there was no offline-verifiability reason to avoid it there.
+- **Migration policy going forward is expand/contract, not "migrations
+  just run before the app starts."** The rolling-update overlap window
+  (old and new backend pods briefly coexisting) is new with this
+  deployment target — Compose's replace-outright restart never created
+  it — so a migration that breaks the *previous* release's still-running
+  pod during that window is a newly-real hazard this session named
+  explicitly (`08-deployment-and-operations.md`) rather than leaving
+  implicit.
+- **`use_staging_acme` defaults to `true`.** A real first `terraform
+  apply` against a real cluster is far more likely to hit a DNS/ingress
+  misconfiguration on the first attempt than to succeed cleanly — this
+  default means that failure mode costs nothing against Let's Encrypt's
+  real production rate limits.
 
-## Real bugs found and fixed during this session's own verification
+## Real gaps found and named during this session
 
-1. **Not a bug — the task's own premise about the rollup job was wrong,
-   and this session corrected it with real evidence rather than either
-   accepting the premise or silently ignoring it.** `docker inspect
-   pulsewatch-backend-1 --format '{{.State.StartedAt}}'` showed the
-   container had been running continuously (no restart, `RestartCount=0`)
-   since 2026-08-31T15:36:31Z, yet only 3 `rollup job run complete` lines
-   existed in its logs by 2026-09-01T11:26 (~20h later): 15:36:32
-   (startup), 21:04:18 (+5h28m), 10:38:10 next day (+13h34m) — visibly
-   irregular, not the ~hourly cadence NFR-005 requires. Cross-checking
-   `pulsewatch-backend-1`'s own `[GIN]` HTTP-access-log line counts by hour
-   showed the *entire* container's traffic went to zero for the same
-   windows (0 lines 17:00–19:59 and 22:00–09:59, full ~4,000+/hour
-   otherwise) — not just rollup logging. `pulsewatch-postgres-1`'s own log
-   line counts by hour showed the identical gap pattern. This rules out a
-   goroutine-specific failure (a panic would crash the whole process — no
-   panic-recovery wrapper exists around any of `main.go`'s goroutines, and
-   the process never restarted) and points at the container/VM itself going
-   unscheduled. Confirmed via the WSL2 VM's own `/proc/uptime` (22.28h of
-   real accumulated runtime measured at 2026-09-01T11:27:35Z, less than the
-   VM's wall-clock age implied by its own boot-time-minus-uptime
-   arithmetic) and Windows' `Microsoft-Windows-Kernel-Power` event log
-   (real sleep(42)/wake(107) event pairs on this host — each only 1-5
-   seconds apart, ruled out as the direct cause of multi-hour gaps; the
-   actual mechanism is Docker Desktop's own WSL2 VM going idle/unscheduled
-   during host inactivity, a distinct thing from full OS suspend). See
-   R-006 for the full write-up.
-2. **R-005 (known risk, not a new one) recurred four separate times this
-   session**, each found, named, confirmed, and cleaned up before
-   proceeding:
-   - 5 orphaned rows after 5 isolated `TestEndToEnd_ThresholdCrossing...`
-     reruns (targets count 4→9).
-   - 74 orphaned rows found at the start of this session's second work
-     block (leftover from a prior batch of runs interrupted by an
-     environment restart mid-session — see item 3), cleaned back to 4.
-   - 43 orphaned rows after the `-p 1` three-run verification batch,
-     cleaned back to 4.
-   - 23 orphaned rows after the final full `go test ./...` confirmation
-     pass, cleaned back to 4.
-   Each cleanup used a single transaction (child rows — `alert_dispatches`,
-   `incidents`, `check_results`, `target_schedule`, `check_rollups_hourly`
-   — deleted before the `targets` row itself), scoped explicitly to
-   non-real target IDs, re-verified back to exactly the real 4 afterward
-   each time.
-3. **A real environment interruption mid-session, not a code or data
-   bug**: this session's own shell tooling was restarted partway through
-   (visible as a task-notification reporting two background shell tasks
-   "stopped... may have been running when the previous Claude Code process
-   exited"), and the Bash tool's PATH came back missing `docker`, `git`,
-   and basic coreutils after the restart (PowerShell was unaffected and
-   used for the remainder of the session). No data was lost — in-progress
-   background test/build runs were simply re-run from scratch after
-   confirming and cleaning up the state they'd left behind (item 2 above).
+1. **The task brief that started this session was stale** (see
+   "Correcting the task brief" above) — corrected by reading real
+   project-memory/git state rather than trusting the brief's own summary.
+2. **`06-security-threat-model.md` and `07-testing-strategy.md` are
+   empty skeletons** beyond section headers, discovered while trying to
+   add this session's own scoped content to each. Not caused by this
+   session (predates it, per `git log` — both files were last touched at
+   Session 3/1 respectively and never filled in since). Tracked as B-012,
+   named as a real, sizeable future session's worth of work, not
+   backfilled shallowly under this session's own time pressure.
+3. **This sandbox cannot exercise real IaC.** No outbound access to the
+   Terraform provider registry or to `github.com`/`get.helm.sh` release
+   downloads, no Docker daemon, no pre-installed Kubernetes tooling.
+   Named exhaustively above and in R-008/B-009 rather than worked around
+   with a fabricated "verified" claim.
 
-## Verification performed (all real, not description)
+## Verification performed (all real, offline; see R-008/B-009 for what remains real-cluster-only)
 
-### Part 1 — rollup cadence
-- **Root-cause evidence**: see "Real bugs found" #1 above — real
-  `docker logs`/`docker inspect` output, real per-hour log-line counts
-  across three containers, real WSL2 `/proc/uptime` and Windows event-log
-  correlation.
-- **Build/vet/gofmt/lint**: `go build ./...` clean; `go vet ./...` clean;
-  `gofmt -l .` — the two pre-existing drift files (`internal/operatorapi/
-  router.go`, `main.go`) are unrelated to this session's changes (confirmed
-  via `git status`, neither is in this session's diff) and were left
-  untouched, out of scope; `golangci-lint run ./internal/rollup/...` — `0
-  issues`. Final full-repo `go build`/`go vet`/`gofmt -l`/`golangci-lint
-  run ./...` reported below.
-- **`TestCadenceGapExceeded`**: real `go test` output, 5/5 subtests pass.
-- **Real extended-observation window**: `TickInterval` temporarily set to
-  20s in `main.go` (reverted after — see below), backend rebuilt
-  (`docker compose build backend`) and redeployed (`docker compose up -d
-  backend`, real `Recreated`/`Started` in the compose output). Real logs
-  showed 9 consecutive ticks at the expected ~20s cadence — 14:30:29,
-  14:30:50, 14:31:10, 14:31:30, 14:31:50, 14:32:10, 14:32:30, 14:32:50,
-  14:33:09 — comfortably past the "3-4 consecutive ticks" bar, with **zero**
-  `cadence gap` WARN lines (confirming no false positives under normal
-  continuous operation). `TickInterval` was then reverted to
-  `rollup.DefaultConfig()`'s real 1h default, confirmed via `git diff
-  backend/main.go` showing no changes, backend rebuilt and redeployed
-  again — real startup tick confirmed in the post-revert logs
-  (`2026/09/01 14:44:22 INFO rollup job run complete rows_written=246
-  duration=942.023922ms`), `docker inspect`'s `StartedAt` showing the fresh
-  `2026-09-01T14:44:20Z` restart. **This approach (temporarily lowering
-  TickInterval for the observation, then restoring it) was used, exactly as
-  the task's own accepted alternative described**, since the real root
-  cause (host/VM idling) isn't something that can be triggered on demand to
-  prove a multi-hour real-world observation directly.
-
-### Part 2 — real authenticated capture
-- **Confirmed the only existing operator account** (`operator@example.com`,
-  `id=c26960b2-...`) via a real `psql SELECT` against
-  `pulsewatch-postgres-1` before touching anything.
-- **Reset its password via the documented break-glass path**, named and
-  confirmed with the user first: a throwaway `_verify_resetpw` program
-  (deleted before this diff was finalized) computed a bcrypt hash via
-  `operatorauth.HashPassword` for a freshly generated 24-byte password and
-  wrote it with a real `UPDATE operators SET password_hash = ... WHERE
-  email = ...` (confirmed `1` row affected).
-- **Real login**: `curl -v -k -c cookies.txt -H "Content-Type:
-  application/json" -d '{"email":"operator@example.com","password":"..."}'
-  https://localhost:8443/api/v1/auth/login` → real `200`, real
-  `Set-Cookie: pulsewatch_session=...; HttpOnly; Secure; SameSite=Strict`,
-  body `{"operator_id":"c26960b2-d54e-4aa8-bc32-5a44090ae1eb","email":
-  "operator@example.com"}`.
-- **Real `/slo` capture, replayed in a separate connection** (not the same
-  TLS session as the login, proving persistence): `curl -v -k -b
-  cookies.txt https://localhost:8443/api/v1/targets/2556de3a-.../slo` →
-  real `200`,
-  `{"target_id":"2556de3a-...","window_days":30,"window_start":
-  "2026-08-02T12:00:00Z","window_end":"2026-09-01T12:00:00Z",
-  "expected_checks":7943,"success_count":797,"failure_count":0,
-  "unknown_count":7146,"uptime_pct":100,"slo_target_pct":99.9,
-  "error_budget_consumed_pct":0}`.
-- **Real dashboard render**: `curl -v -k -b cookies.txt
-  https://localhost:8443/dashboard` → real `200`, real SvelteKit-rendered
-  HTML (65,432 bytes) containing the real "Uptime (30d)" column with
-  `100.00%` for the two healthy targets (`redis`, the real `backend`
-  health check) and `0.00%` for the two deliberately-broken ones
-  (`/this-path-does-not-exist`, `/also-does-not-exist`) — matching the
-  `/slo` curl response's `uptime_pct` verbatim, both via the real hydration
-  data island (`uptime_pct:100,slo_target_pct:99.9,...`) and the rendered
-  table cells.
-- **All of the above is real** — a real session, a real login, a real
-  computed percentage from this instance's real historical `check_results`
-  history, not mock/fabricated data (contrast Session 12's own capture,
-  which minted a session directly and never exercised the real password
-  path).
-
-### Part 3 — new flake (R-007)
-- **Isolated reruns**: `go test ./internal/scheduler/... -run
-  TestEndToEnd_ThresholdCrossing_DispatchesOnce_ThenResolvesOnRecovery
-  -count=5 -v` → real `5/5 PASS` (1.34s–3.35s each).
-- **Reproduced under real concurrent load**: a plain `go test ./...` run
-  against the real, live shared `docker-compose` Postgres (with
-  `pulsewatch-backend-1`'s own live scheduler running against it
-  concurrently) → real `--- FAIL:
-  TestEndToEnd_ThresholdCrossing_DispatchesOnce_ThenResolvesOnRecovery
-  (17.69s)` / `alert_lifecycle_test.go:279: condition not met within 15s`
-  (waiting for the "opened" dispatch to be recorded).
-- **Reproduced again under `go test -p 1 ./...`** (3 serialized runs): run
-  1 failed the identical test at a *different* line —
-  `alert_lifecycle_test.go:297: condition not met within 15s` (waiting for
-  `state == "healthy"` after recovery), 17.60s; runs 2 and 3 passed. **This
-  is the key new finding**: unlike R-002 (which `-p 1` has reliably avoided
-  across two prior sessions), `-p 1` did **not** reliably avoid this flake —
-  reported honestly per the task's own instruction to report the `-p 1`
-  outcome either way. See R-007 in `10-risk-register.md` for the full
-  mechanism discussion (real evidence points at contention with the live
-  `pulsewatch-backend-1` container's own concurrent scheduler activity —
-  something `-p 1` has no power over, since it only serializes `go test`'s
-  own package binaries — rather than R-002's own cross-test-package
-  contention mechanism).
-- Logged as R-007, distinct from R-002, with an honest "not fully
-  root-caused this session" — diagnosing the exact contention point is left
-  to Session 14.
-
-### Full-repo final verification
-- `go build ./...`: clean (`BUILD_OK`).
-- `go vet ./...`: clean (`VET_OK`).
-- `gofmt -l .`: flags exactly `internal/operatorapi/router.go` and
-  `main.go` — confirmed **pre-existing and unrelated to this session's
-  diff** (`git diff` on both is empty/absent; `main.go`'s only line this
-  session touched was reverted back to byte-identical). Root cause
-  confirmed directly: both files are CRLF on disk (this developer's
-  Windows git checkout, `core.autocrlf`), which `gofmt` running inside the
-  Linux verification container flags purely on line endings, not real Go
-  formatting — the committed blob content itself is unaffected. This
-  session's own two files (`rollup.go`, `cadence_test.go`) are not
-  flagged. Not fixed — reformatting unrelated files is out of this
-  session's scope, noted here rather than silently claimed as "0 issues"
-  the way Session 12's own note read.
-- `golangci-lint run ./internal/rollup/...` (this session's actual
-  changed package): `0 issues`.
-- `go test ./...` (final full run against the real, live shared Postgres):
-  every package passed except `internal/alerting`'s
-  `TestRecordCheckResult_ThresholdCrossingOpensIncidentDispatch` — this is
-  R-002's own already-tracked flake (confirmed by name and by the exact
-  assertion it failed), not a regression from this session's changes; this
-  session's own two changed/new packages (`internal/rollup`,
-  `internal/scheduler`) both passed clean in this same run. Left alone, per
-  the explicit ground rule not to fix R-002 this session. A fourth R-005
-  recurrence (23 orphaned rows) resulted from this run and was cleaned up
-  the same way as the other three (see "Real bugs found" #2).
-- Confirmed `privacy-forge`, `laravel-consent-guard`, `bookslot`, and
-  `lexicon` were not touched. `04-data-model.md`, `openapi.yaml`, the
-  schema, ADR-0001–0004, the router split (Session 11), and TLS setup
-  (Session 10) were not touched beyond what this session's actual root
-  cause required (nothing — the fix is entirely inside `internal/rollup`).
+- `terraform fmt -check -diff -recursive` (`infra/terraform/`): clean
+  after one real formatting fix (`main.tf`'s Secret `data` block
+  alignment).
+- `terraform validate`: attempted, failed as expected — "Missing required
+  provider" for both `hashicorp/kubernetes` and `hashicorp/helm`, since
+  `terraform init` cannot reach `registry.terraform.io` in this sandbox
+  (`connect_rejected`, confirmed directly via `curl`). Not silently
+  skipped — the failure and its cause are recorded here and in
+  ADR-0005/R-008.
+- `kubectl kustomize --load-restrictor LoadRestrictionsNone
+  deploy/k8s/overlays/production`: succeeds, 18 objects, output inspected
+  directly with a real Python/PyYAML pass (not just eyeballed) — image
+  tags, ConfigMap hash-reference rewriting, both patches, and every
+  Service/Deployment selector all confirmed correct. Re-run a second time
+  after all subsequent edits; byte-identical to the first successful
+  render.
+- `bash -n deploy/k8s/rollout.sh`: clean.
+- `python3 -c "yaml.safe_load(open('.github/workflows/ci.yml'))"`: clean,
+  all 7 jobs (5 pre-existing + 2 new) present.
+- `docker info`, `command -v terraform/kubectl/helm/kind/k3d/minikube`,
+  `curl` against `registry.terraform.io`/`get.helm.sh`/`github.com`: all
+  run and their real output is what R-008/ADR-0005/this handoff's own
+  "Status" line quote — not summarized from memory.
 
 ## Open questions and risks
 
-- **R-006 (opened this session):** rollup cadence gaps on this developer's
-  own dev machine, root-caused to Docker Desktop's WSL2 VM idling during
-  host inactivity, mitigated with visibility logging (not eliminable in
-  code). Not applicable to a real always-on deployment, which doesn't exist
-  yet (R-003's gate). See `10-risk-register.md`.
-- **R-007 (opened this session):** the new scheduler flake, reproduced
-  twice under real load including once under `-p 1` — notably *not* fully
-  explained by R-002's own mechanism. Not root-caused to a specific query
-  or lock this session. See `10-risk-register.md`.
-- **R-005 (unchanged in substance, recurred three more times this
-  session):** still fully open, still exactly the documented mechanism,
-  still tracked as B-006.
-- **R-002, R-003 (unchanged, carried forward, untouched this session per
-  explicit scope):** see `10-risk-register.md`.
-- **B-007 (opened this session):** no operator password-reset/rotation
-  tool exists; today's only path is direct DB access, which this session
-  had to use for real.
-- **`/incidents` is still unbuilt** (B-002) — the last piece of
-  `05-api-contracts.md`'s originally-specified read surface. With this
-  session's work done, the SLO/rollup feature area (Session 12 + this
-  session's correction) can genuinely be considered done.
+- **R-008 (opened this session):** offline-only IaC/K8s validation — no
+  live cluster or registry access in this sandbox. Open, next review
+  Session 15.
+- **R-003 (narrowed further this session):** still fully open for Docker
+  Compose; structurally mitigated by design (not yet cluster-verified,
+  R-008) for the Kubernetes target.
+- **R-002, R-005, R-006, R-007 (carried forward, untouched this
+  session):** unchanged — see `10-risk-register.md`. This session's scope
+  was deployment-layer only; no scheduler/alerting/rollup code was
+  touched.
+- **B-009 (real-cluster verification), B-010 (cloud-VM bootstrap
+  module), B-011 (Kubernetes-target Postgres backup/restore), B-012
+  (fill the two empty SDLC-phase docs) — all opened this session.**
+- **B-002, B-004, B-005, B-006, B-007, B-008 (carried forward from
+  Session 13, untouched):** see `11-backlog.md`.
 
 ## Next recommended session
 
-- Proposed session title: **Session 14 — `GET /targets/{id}/incidents`,
-  and/or R-005's cleanup-ordering fix (B-006), and/or R-007's deeper root
-  cause.** All three are real, well-scoped candidates; `/incidents` is the
-  most clearly-scoped feature work, R-005/R-007 are both testing-hygiene
-  investigations that would benefit from being done together (a future
-  session investigating R-007 should specifically try reproducing it with
-  the live `pulsewatch-backend-1` container's scheduler stopped, which
-  would also be a natural test of R-005's own already-confirmed
-  mechanism).
-  - Do **not** reopen ADR-0001–0004, and do not fold SLO-threshold alerting
-    or configurable windows into `/incidents` work — those are B-004/B-005.
-  - R-002's own flakes remain explicitly out of scope until a session picks
-    them up directly.
-- Inputs required: this handoff; `10-risk-register.md` (R-002, R-003,
-  R-005, R-006, R-007); `11-backlog.md` (B-002, B-004, B-005, B-006, B-007).
-- Expected deliverables: depends which item(s) a future session picks —
-  see `11-backlog.md`/`10-risk-register.md`'s own per-item mitigation
-  notes for what "done" looks like for each.
-- Definition of done: whichever item(s) are picked up, verified with real
-  evidence per this project's own established standard — not "looks
-  right."
+- Proposed session title: **Session 15 — Real-Cluster Verification of
+  ADR-0005 (B-009), or `GET /targets/{id}/incidents` (B-002) if no real
+  cluster is available to a session yet.** B-009 is the honest, correct
+  next step if a future session's environment has real registry/cluster
+  access (`terraform init`/`apply`, `deploy/k8s/rollout.sh` against an
+  actual cluster, confirming pods reach `Running` and the Ingress issues
+  a real staging certificate) — this is not optional polish, it is what
+  turns ADR-0005 from "documented" into "proven," matching this project's
+  own standard for everything else it calls done. If no such environment
+  exists yet, `/incidents` (B-002) remains the best-scoped pure-feature
+  alternative, exactly as Session 13's own handoff already reasoned.
+  - Do **not** reopen ADR-0001–0005 without new measured/real evidence
+    per each one's own Revisit triggers.
+  - Do **not** attempt to backfill B-012 (the empty security/testing
+    docs) as a side effect of an unrelated session — it is sizeable
+    enough to deserve its own bounded session.
+- Inputs required: this handoff; ADR-0005; `10-risk-register.md` (R-003,
+  R-008, plus carried-forward R-002/R-005/R-006/R-007);
+  `11-backlog.md` (B-002, B-009 through B-012).
+- Definition of done: whichever item is picked up, verified with real
+  evidence per this project's own established standard.
 
 ## Paste-into-new-session context
 
 **Project:** pulsewatch — self-hosted uptime, SLO, and alerting service with a lightweight agent
 **Track:** public flagship
-**Repository state:** branch `main`, unreleased (pre-v0.1.0). Everything
-Session 12's own handoff listed as complete remains complete; this
-session's real correction is that the SLO/rollup feature area is *now*
-genuinely, fully verified end-to-end with a real (not mock) authenticated
-capture, and the rollup job's apparent stall was investigated to a real
-root cause (a dev-machine environment characteristic, not a code defect)
-rather than left as an open question.
+**Repository state:** branch `main` (this session developed on
+`claude/pulsewatch-infra-k8s-a5ry2f` per its own worker-branch
+instructions), unreleased (pre-v0.1.0). Everything Session 13's own
+handoff listed as complete remains complete and untouched; this session
+added a second, production-shaped deployment target (Kubernetes, via
+Terraform + Kustomize) alongside the existing Docker Compose local/dev
+path, plus the ADR/decision-log/risk-register/backlog documentation that
+change requires.
 
 **Problem being solved:** unchanged — see `00-project-brief.md`. This
-session did not add a feature; it closed out verification gaps in the
-existing SLO/rollup feature area and logged a new testing-hygiene finding.
+session did not add an application feature; it added a deployment-layer
+capability this repo's own claimed deep phases (Release & Deployment,
+Operations & Maintenance) needed and previously lacked a real way to
+demonstrate.
 
-**Users:** Single operator (this developer) plus the machine "Agent" role — v1 has no other identity (`02-requirements.md`).
+**Users:** unchanged — single operator plus the machine "Agent" role (`02-requirements.md`).
 
-**Current stack:** unchanged from Session 12's own description, except:
-- Backend: `internal/rollup/rollup.go` gained `cadenceGapExceeded` and its
-  WARN-logging call site (no new dependency, no schema change).
-- Testing: one new test file (`internal/rollup/cadence_test.go`, no DB
-  needed).
-- Infra: `docker-compose.yml` unchanged; `backend` was rebuilt/redeployed
-  twice this session (once for the temporary observation build, once to
-  restore the real config) — both via the project's existing `docker
-  compose build`/`up -d` flow, no compose file changes.
+**Current stack:** everything from Session 13 unchanged, plus:
+- Deployment: Terraform (`infra/terraform/`) and Kubernetes
+  (`deploy/k8s/`, Kustomize-based) as a second deployment target. Docker
+  Compose unchanged, still the local/dev default.
+- CI: two new jobs in `.github/workflows/ci.yml` (offline IaC/K8s
+  validation; GHCR image publishing on `main`).
+- No application code (Go, SvelteKit, SQL schema) was touched this
+  session.
 
-**Architecture decisions that must not be reversed:** unchanged from
-Session 12's own list — nothing in this session touched ADR-0001–0004, the
-router split, TLS setup, or the schema.
+**Architecture decisions that must not be reversed:** ADR-0001–0004
+unchanged, per Session 13's own list. New: **ADR-0005** — Terraform for
+platform state, Kustomize-based plain manifests (not Helm) for the
+application workload, applied separately, BYO-cluster only. Must not be
+silently collapsed back into "Terraform manages everything" or "just use
+`kubectl apply -f` by hand" without a fresh options-considered pass.
 
 **Implementation state:**
-- Done: everything Session 12's handoff listed, **now with the real
-  (non-mock) authenticated verification Session 12's own capture was
-  missing**, and with the rollup job's apparent stall root-caused and
-  addressed (visibility logging, not a behavior change) rather than left
-  open.
+- Done: ADR-0005; `01-scope-and-non-goals.md`/`09-decision-log.md`/
+  `10-risk-register.md`/`11-backlog.md`/`13-release-notes.md` updates;
+  the full Terraform platform-layer module; the full Kubernetes
+  workload-layer manifest set + rollout script; the new
+  `08-deployment-and-operations.md` Kubernetes section (rollout,
+  migration policy, agent-compat contract, TLS/R-003 narrowing); scoped
+  additions to `06-security-threat-model.md`/`07-testing-strategy.md`;
+  two new CI jobs.
 - In progress: nothing mid-flight.
-- Not started: `/incidents` (B-002), SLO-threshold alerting (B-004),
-  configurable per-target windows (B-005), TLS for `backend`'s agent-facing
-  listener (R-003), operator password-reset tooling (B-007, newly
-  identified), R-005's broader test-cleanup fix (B-006), R-007's deeper
-  root cause (newly identified).
+- Not started: real-cluster verification (B-009) — this is the load-
+  bearing gap, not a nice-to-have; a cloud-VM bootstrap module (B-010);
+  Kubernetes-target Postgres backup/restore (B-011); filling
+  `06-security-threat-model.md`/`07-testing-strategy.md` for the whole
+  system (B-012); every item already open at Session 13's close
+  (B-002, B-004 through B-008, R-002, R-005 through R-007).
 
-**Constraints and non-goals:** unchanged — see `01-scope-and-non-goals.md`.
+**Constraints and non-goals:** `01-scope-and-non-goals.md`, as amended by
+this session for the deployment layer only — the application-layer
+technology freeze (no TimescaleDB/Prometheus/Grafana/message queue) is
+unchanged and must not be reopened by this ADR.
 
 **Deep SDLC phases for this repo:** Release & Deployment, Operations & Maintenance
 **Intentionally light phases:** Discovery & Planning, Requirements Analysis, Verification & Testing, Retirement & Handover
-**Baseline-depth, real rigor on its own merits:** this session's own real
-rigor was almost entirely Verification & Testing depth — a real
-root-cause investigation (cross-container log correlation, WSL2/Windows
-event-log evidence) that overturned the task's own initial premise, a
-real credential-reset-and-login verification cycle, and real,
-honestly-reported flake reproduction (including a result — `-p 1` not
-preventing R-007 — that complicated rather than confirmed the expected
-narrative). See `00a-ledger-confirmation.md`.
+**Baseline-depth, real rigor on its own merits:** this session's real
+rigor was almost entirely Release & Deployment / Operations & Maintenance
+depth — a genuine options-considered ADR, a real (if offline-only)
+Terraform module and Kubernetes manifest set, and a design-level rollout
+contract (rolling-update safety, migration expand/contract policy,
+agent-compatibility contract) reasoned through from this project's own
+existing ADRs rather than invented fresh. The one place this session
+could not reach real rigor — a live cluster to apply against — is named
+exhaustively rather than glossed over, consistent with Session 13's own
+practice of correcting overclaims rather than repeating them.
 
-**Task for this session (three-part, bounded) — now complete:**
-Root-cause and address the rollup job's apparent stall; obtain a real,
-non-mock authenticated `/slo` + dashboard capture; log the new scheduler
-flake. **Done — see Work completed above, with the Part 1 correction
-clearly stated.**
+**Task for this session (project-owner-confirmed scope expansion) — now
+complete for what this sandbox could verify:** document and build a real
+second Kubernetes/Terraform deployment target for pulsewatch, as a
+deliberate, reasoned amendment to the Session 0 technology freeze. **Done
+— see Work completed above, with the real-cluster-verification gap
+stated as clearly as every other honestly-scoped absence in this
+project's history.**
 
-**Definition of done — met:**
-- Rollup job's stall root-caused (a dev-machine environment
-  characteristic, not a code defect) and given the right-sized fix
-  (visibility logging), proven via a real extended-observation window
-  (temporarily lowered `TickInterval`, 9 real consecutive ticks observed,
-  restored afterward) — see Verification performed above.
-- A real, non-mock authenticated `/slo` capture and dashboard render exist
-  and are documented above, replacing Session 12's own mock evidence for
-  this specific gap.
-- The new scheduler flake is logged in the risk register (R-007) with an
-  accurate mechanism discussion, including the honest, non-obvious result
-  that `-p 1` did not prevent it (unlike R-002).
-- `docs/project-memory/` updated: this file, `09-decision-log.md`,
-  `10-risk-register.md`, `11-backlog.md`, `13-release-notes.md`.
-- Local HEAD confirmed to match `origin/main` after commit/push — see the
-  actual `git log`/`git status` proof pasted into this session's own
-  closing message.
+**Definition of done — met, with one explicit carve-out:**
+- ADR-0005 written with real options-considered rigor, matching
+  ADR-0001–0004's own bar.
+- `01-scope-and-non-goals.md` amended (not silently violated) with a
+  clear pointer to the new ADR.
+- Real Terraform module and Kubernetes manifests exist, are internally
+  consistent with `docker-compose.yml`'s own real service topology and
+  R-004's router split, and are validated with every offline tool this
+  sandbox actually has (documented exactly which tools those are and
+  which ones it doesn't).
+- `08-deployment-and-operations.md`'s new section gives a real,
+  reasoned answer to "safe rollout while continuing to monitor,"
+  "migrations," and "agent/server version compatibility during a rolling
+  deploy" — the exact three things the task's own framing named.
+- **Carve-out, stated as a gate rather than a caveat:** real-cluster
+  verification (B-009) is NOT done, and this file does not claim it is.
+  A future session with real registry/cluster access must complete it
+  before this deployment target can be called this project's *proven*
+  production path rather than its documented one.
+- Local HEAD confirmed to match `origin/<worker-branch>` after commit/
+  push — see this session's own closing message for the real `git log`/
+  `git status` proof.
 
-**Files to attach or paste for Session 14:**
-- `10-risk-register.md` (R-002, R-003, R-005, R-006, R-007) and
-  `11-backlog.md` (B-002, B-004, B-005, B-006, B-007) — next-step candidates
-- `docs/architecture/openapi.yaml` (`Incident` schema,
-  `/targets/{id}/incidents` path — already specified, unbuilt)
-- `docs/project-memory/12-session-handoff.md` (this file)
+**Files to attach or paste for Session 15:**
+- `docs/adr/ADR-0005-iac-terraform-and-kubernetes-deployment.md`
+- `10-risk-register.md` (R-003, R-008) and `11-backlog.md` (B-009
+  through B-012)
+- `infra/terraform/README.md`, `deploy/k8s/README.md`
 
-**Ground rules:** Do not change the stack. Do not introduce a third new
-technology. Do not expand the deep-SDLC-phase count beyond two. Do not
-reopen ADR-0001–0004 without new measured evidence per their own Revisit
-triggers. Do not touch `privacy-forge`, `laravel-consent-guard`, `bookslot`,
-or `lexicon`. Do not fix R-002's own existing flakes without a session
-scoped specifically for that.
+**Ground rules:** Do not change the application stack (Go/Gin/SvelteKit/
+Postgres/Redis/OTel) or reopen the application-layer technology freeze.
+Do not reopen ADR-0001–0005 without new measured/real evidence per each
+one's own Revisit triggers. Do not touch `privacy-forge`,
+`laravel-consent-guard`, `bookslot`, or `lexicon`. Do not claim
+real-cluster verification (B-009) is done without actually running
+`terraform apply`/`deploy/k8s/rollout.sh` against a live cluster and
+recording real output, the same discipline Session 13 already applied to
+its own auth-capture correction.

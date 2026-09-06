@@ -1,0 +1,130 @@
+# Kubernetes equivalent of docker-compose.yml's `backend` service.
+#
+# One Deployment, but — matching R-004's fix (backend/main.go runs two
+# independent http.Server instances, operatorSrv:8080 and agentSrv:8081,
+# with no operatorapi route ever mounted on the agent listener or vice
+# versa) — two separate Service objects, not one Service fronting both
+# container ports. Collapsing this back to one Service would silently
+# undo the structural guarantee R-004 exists to prove
+# (backend/main_test.go's TestOperatorRouterHasNoAgentRoutes/
+# TestAgentRouterHasNoOperatorRoutes) — a single Service load-balancing
+# across both ports would not itself leak anything, but it would make it
+# easy for a future change to re-merge the routing without either test
+# catching it at the Kubernetes-manifest layer. Keeping them separate here
+# keeps the router split visible at the infrastructure layer too.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  labels:
+    app.kubernetes.io/name: backend
+    app.kubernetes.io/part-of: pulsewatch
+spec:
+  # replicas: 1 today, matching v1's single-instance design
+  # (01-scope-and-non-goals.md) — but a RollingUpdate still briefly runs
+  # the old and new pod together during every deploy (maxSurge: 1), which
+  # is exactly the overlap window ADR-0001's Postgres row-leasing was
+  # already designed to survive (see that ADR's "Restart-boundary race").
+  # This is the real, live exercise of that design this deployment target
+  # gives it that docker-compose's replace-outright restart never could —
+  # see ADR-0005 and 08-deployment-and-operations.md.
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0 # never drop below one Ready pod — pulsewatch must keep monitoring through its own deploy (00a-ledger-confirmation.md)
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: backend
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: backend
+        app.kubernetes.io/part-of: pulsewatch
+    spec:
+      terminationGracePeriodSeconds: 40 # must exceed SCHEDULER_HARD_SHUTDOWN_DEADLINE (default 30s, ADR-0004) so Kubernetes SIGKILLs only after the app's own graceful drain has had its full chance to finish, not before it
+      containers:
+        - name: backend
+          image: pulsewatch-backend # replaced by overlays/production/kustomization.yaml's images: field, set by rollout.sh
+          ports:
+            - name: operator
+              containerPort: 8080
+            - name: agent
+              containerPort: 8081
+          envFrom:
+            - secretRef:
+                name: pulsewatch-app-secrets
+            - configMapRef:
+                name: pulsewatch-backend-config
+          readinessProbe:
+            # Both listeners, same discipline as docker-compose.yml's own
+            # healthcheck comment: only Ready if operator-facing AND
+            # agent-facing are both actually serving.
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 3
+            periodSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              memory: 256Mi
+---
+# operator listener (:8080) — every operatorapi route, session-cookie
+# gated. Reachable only through the Ingress (ingress.yaml), never as a
+# LoadBalancer/NodePort — matching R-004's own "never directly from the
+# host in any scheme" requirement, carried through to this deployment
+# target rather than loosened.
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-operator
+  labels:
+    app.kubernetes.io/name: backend
+    app.kubernetes.io/part-of: pulsewatch
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: backend
+  ports:
+    - port: 8080
+      targetPort: 8080
+---
+# agent listener (:8081) — every agentapi route (ADR-0003), no operatorapi
+# route mounted. Also ClusterIP, reachable through the Ingress on a
+# distinct path (ingress.yaml) rather than a separately-published host
+# port the way docker-compose.yml's "8020:8081" is — this is the one real
+# behavioral improvement this deployment target makes over Compose (see
+# 08-deployment-and-operations.md's Kubernetes section): routing agent
+# traffic through the same Ingress gives it the same real, cert-manager-
+# issued TLS certificate the operator dashboard gets, closing R-003's
+# plaintext-agent-transport gap for this target specifically, without
+# touching ADR-0003's agent-facing logic at all. Session 11 rejected this
+# same idea for Compose only because of the cost of distributing Caddy's
+# self-signed local CA to every remote agent host — a cost that doesn't
+# exist here, since cert-manager issues a real, publicly-trusted
+# certificate no agent needs to be told to trust.
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-agent
+  labels:
+    app.kubernetes.io/name: backend
+    app.kubernetes.io/part-of: pulsewatch
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: backend
+  ports:
+    - port: 8081
+      targetPort: 8081

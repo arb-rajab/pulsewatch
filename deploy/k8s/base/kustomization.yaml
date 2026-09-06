@@ -1,0 +1,57 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Deliberately no `namespace:` field here — infra/terraform/main.tf owns
+# namespace creation, and pulsewatch-app-secrets already lives in whatever
+# namespace that module was applied with. deploy/k8s/rollout.sh passes
+# `-n <namespace>` explicitly to every kubectl invocation instead, so this
+# base stays reusable if the namespace name is ever changed via
+# infra/terraform's own variable, without a kustomize edit to match.
+
+resources:
+  - backend-config.yaml
+  - postgres.yaml
+  - redis.yaml
+  - otel-collector.yaml
+  - migration-job.yaml
+  - backend.yaml
+  - frontend.yaml
+  - ingress.yaml
+  - networkpolicy.yaml
+
+configMapGenerator:
+  - name: otel-collector-config
+    files:
+      - config.yaml=../../../otel-collector-config.yaml
+  - name: pulsewatch-migrations
+    files:
+      # Explicit list, not a directory glob: migrations must stay in
+      # lockstep with backend/migrations/*.sql exactly (no accidental
+      # inclusion of a stray file in that directory), and kustomize's own
+      # ordering/hash-suffix behavior is easier to reason about with an
+      # explicit list than an implicit directory read. Add a line here
+      # whenever a new migration pair is added to backend/migrations/.
+      - ../../../backend/migrations/000001_create_operators.up.sql
+      - ../../../backend/migrations/000001_create_operators.down.sql
+      - ../../../backend/migrations/000002_create_agents.up.sql
+      - ../../../backend/migrations/000002_create_agents.down.sql
+      - ../../../backend/migrations/000003_create_targets.up.sql
+      - ../../../backend/migrations/000003_create_targets.down.sql
+      - ../../../backend/migrations/000004_create_target_schedule.up.sql
+      - ../../../backend/migrations/000004_create_target_schedule.down.sql
+      - ../../../backend/migrations/000005_create_check_results.up.sql
+      - ../../../backend/migrations/000005_create_check_results.down.sql
+      - ../../../backend/migrations/000006_create_check_rollups_hourly.up.sql
+      - ../../../backend/migrations/000006_create_check_rollups_hourly.down.sql
+      - ../../../backend/migrations/000007_create_incidents.up.sql
+      - ../../../backend/migrations/000007_create_incidents.down.sql
+      - ../../../backend/migrations/000008_create_alert_channels.up.sql
+      - ../../../backend/migrations/000008_create_alert_channels.down.sql
+      - ../../../backend/migrations/000009_create_alert_dispatches.up.sql
+      - ../../../backend/migrations/000009_create_alert_dispatches.down.sql
+
+labels:
+  - includeSelectors: false
+    pairs:
+      app.kubernetes.io/part-of: pulsewatch
+      app.kubernetes.io/managed-by: kustomize

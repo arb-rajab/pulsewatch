@@ -1,0 +1,60 @@
+# Kubernetes equivalent of Caddyfile's routing — plus one deliberate
+# improvement over it, see backend.yaml's backend-agent Service comment.
+# `host` is a placeholder here; overlays/production patches it to
+# var.ingress_hostname (must match infra/terraform's own value so
+# cert-manager's HTTP-01 challenge and this Ingress agree on what they're
+# proving ownership of).
+#
+# Path ordering matters: ingress-nginx matches by longest-prefix, but
+# these are still listed most-specific-first for a human reading this file
+# to see the same precedence nginx will apply — /api/v1/agent and /v1/logs
+# (agent-facing, ADR-0003) before the general /api prefix (operator-facing,
+# session-cookie gated), so an agent's assignment-poll or log-ingest
+# request is never accidentally matched by the operator rule instead.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: pulsewatch
+  annotations:
+    cert-manager.io/cluster-issuer: pulsewatch-letsencrypt
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+  labels:
+    app.kubernetes.io/part-of: pulsewatch
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - pulsewatch.example.invalid # placeholder — patched per-overlay
+      secretName: pulsewatch-tls
+  rules:
+    - host: pulsewatch.example.invalid # placeholder — patched per-overlay
+      http:
+        paths:
+          - path: /api/v1/agent
+            pathType: Prefix
+            backend:
+              service:
+                name: backend-agent
+                port:
+                  number: 8081
+          - path: /v1/logs
+            pathType: Prefix
+            backend:
+              service:
+                name: backend-agent
+                port:
+                  number: 8081
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: backend-operator
+                port:
+                  number: 8080
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend
+                port:
+                  number: 3000
