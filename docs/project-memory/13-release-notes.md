@@ -13,8 +13,20 @@
   Compose remains the documented local/dev path, unchanged. See
   ADR-0005 and `08-deployment-and-operations.md`'s new Kubernetes
   section for the full rollout/migration/agent-compatibility contract
-  this adds (Session 14). **Not yet verified against a live cluster** —
-  see that section's "What's not yet real," R-008, and B-009.
+  this adds (Session 14). **Session 15: the Kubernetes workload half is
+  now real-cluster-verified** — real postgres/redis/backend/migration-Job
+  manifests applied against a real (self-built) Kubernetes v1.37.0
+  cluster, reaching real `Running`/`Complete` status, including a real
+  migration run and three real rolling updates with measured health-check
+  continuity. Terraform `apply`, cert-manager/Let's Encrypt issuance, and
+  NetworkPolicy enforcement on a real CNI remain unverified — see ADR-0005's
+  Session 15 update, R-008, and B-013.
+- `deploy/k8s/base/backend.yaml`: a `lifecycle.preStop: sleep 5` on the
+  backend container, added after Session 15's real rolling-update
+  measurement found a small (~0.3-1s), real gap in `maxUnavailable: 0`'s
+  zero-drop guarantee caused by kube-proxy's asynchronous Endpoint
+  removal — the standard mitigation for this well-known Kubernetes
+  characteristic.
 - `.github/workflows/ci.yml`: a new `iac-and-k8s-manifests-validate` job
   (offline Terraform/Kustomize validation on every push/PR) and a new
   `publish-images` job (builds and pushes `backend`/`frontend` images to

@@ -1,0 +1,8 @@
+{"file":"github.com/opencontainers/runc/libcontainer/exeseal/cloned_binary_linux.go:207","func":"github.com/opencontainers/runc/libcontainer/exeseal.IsCloned","level":"debug","msg":"F_GET_SEALS on /proc/self/exe failed: invalid argument","time":"2026-09-06T08:25:28Z"}
+{"file":"github.com/opencontainers/runc/libcontainer/exeseal/cloned_binary_linux.go:232","func":"github.com/opencontainers/runc/libcontainer/exeseal.CloneSelfExe","level":"debug","msg":"runc exeseal: using overlayfs for sealed /proc/self/exe","time":"2026-09-06T08:25:28Z"}
+{"file":"github.com/opencontainers/runc/libcontainer/container_linux.go:514","func":"github.com/opencontainers/runc/libcontainer.(*Container).newParentProcess","level":"debug","msg":"runc exeseal: using /proc/self/exe clone","time":"2026-09-06T08:25:28Z"}
+{"level":"debug","msg":"nsexec[15978]: =\u003e nsexec container setup","time":"2026-09-06T08:25:28Z"}
+{"level":"debug","msg":"nsexec[15978]: affinity: 0xf","time":"2026-09-06T08:25:28Z"}
+{"level":"debug","msg":"nsexec[15978]: update /proc/self/oom_score_adj to '-998'","time":"2026-09-06T08:25:28Z"}
+{"level":"fatal","msg":"nsexec[15978]: failed to update /proc/self/oom_score_adj: Permission denied","time":"2026-09-06T08:25:28Z"}
+{"level":"error","msg":"runc run failed: unable to start container process: can't get final child's PID from pipe: EOF","time":"2026-09-06T08:25:28Z"}

@@ -1,0 +1,14 @@
+Client Version: v1.37.0
+Kustomize Version: v5.8.1
+Server Version: v1.37.0
+NAME        STATUS   ROLES    AGE   VERSION   INTERNAL-IP   EXTERNAL-IP   OS-IMAGE             KERNEL-VERSION           CONTAINER-RUNTIME
+localhost   Ready    <none>   53m   v1.37.0   192.0.2.2     <none>        Ubuntu 24.04.4 LTS   6.18.44-fc-v24 (amd64)   containerd://2.2.2
+--- component processes (real binaries, not containers) ---
+root      2860  1.4  0.4 12475928 71132 ?      Sl   08:05   0:50 etcd --name node1 --data-dir /root/k8s-cluster/etcd-data --listen-client-urls http://127.0.0.1:2379 --advertise-client-urls http://127.0.0.1:2379 --listen-peer-urls http://127.0.0.1:2380 --initial-advertise-peer-urls http://127.0.0.1:2380 --initial-cluster node1=http://127.0.0.1:2380
+root      9683  1.7  0.5 2200992 84076 ?       Sl   08:41   0:22 kubelet --kubeconfig=/root/k8s-cluster/kubelet.kubeconfig --config=/root/k8s-cluster/kubelet-config.yaml --root-dir=/var/lib/kubelet --cert-dir=/var/lib/kubelet/pki --hostname-override=localhost --pod-cidr=10.244.0.0/24 --fail-cgroupv1=false --v=2
+root     16286  2.9  0.4 2369624 70960 ?       Sl   08:25   1:04 containerd --config /etc/containerd/config.toml
+root     16483  1.9  0.4 2090704 74980 ?       Ssl  08:26   0:42 containerd --config /var/run/docker/containerd/containerd.toml
+root     24844  3.6  1.7 1556692 279920 ?      Sl   08:56   0:13 kube-apiserver --etcd-servers=http://127.0.0.1:2379 --service-cluster-ip-range=10.96.0.0/12 --bind-address=0.0.0.0 --secure-port=6443 --advertise-address=192.0.2.2 --client-ca-file=pki/ca.crt --tls-cert-file=pki/apiserver.crt --tls-private-key-file=pki/apiserver.key --service-account-key-file=pki/sa.pub --service-account-signing-key-file=pki/sa.key --service-account-issuer=https://kubernetes.default.svc.cluster.local --authorization-mode=Node,RBAC --allow-privileged=true --kubelet-client-certificate=pki/kubelet.crt --kubelet-client-key=pki/kubelet.key --kubelet-certificate-authority=pki/ca.crt
+root     24938  0.2  0.3 1376892 56556 ?       Sl   08:56   0:01 kube-scheduler --kubeconfig=/root/k8s-cluster/scheduler.kubeconfig --bind-address=127.0.0.1
+root     25046  0.0  0.2 1305432 46512 ?       Sl   08:57   0:00 kube-proxy --config=/root/k8s-cluster/kube-proxy-config.yaml --v=2
+root     25499  1.7  0.6 1405492 114564 ?      Sl   08:57   0:05 kube-controller-manager --kubeconfig=/root/k8s-cluster/controller-manager.kubeconfig --service-account-private-key-file=pki/sa.key --root-ca-file=pki/ca.crt --cluster-signing-cert-file=pki/ca.crt --cluster-signing-key-file=pki/ca.key --allocate-node-cidrs=true --cluster-cidr=10.244.0.0/16 --use-service-account-credentials=true --bind-address=127.0.0.1

@@ -136,3 +136,54 @@ detail.
   application itself, per `01-scope-and-non-goals.md`'s own (updated, not
   deleted) non-goal row — this amendment is scoped to the deployment layer
   only.
+
+## Session 15 — Real-Cluster Verification of ADR-0005 (B-009): Amendment, Not Reversal
+
+- **Not a new ADR, and not a reopening of ADR-0005's Decision.** B-009
+  asked whether Session 14's Kubernetes deployment target actually works,
+  not whether it should exist or be built differently — this session
+  found real evidence, it did not revisit the design. Recorded as an
+  update appended to ADR-0005 itself (its own convention: see that file's
+  Session 15 section), not a separate ADR-0006.
+- **The real blocker Session 14 named (no live cluster) turned out to be
+  two distinct, fixable sandbox quirks, not a fundamental sandbox
+  limitation** — this session's own sandbox got a working Docker daemon
+  and installable `kubectl`/`kustomize`/`terraform` (unlike Session 14's),
+  but real pods still would not start until two root causes were found by
+  replaying the exact failing container spec directly through `runc
+  --debug` rather than trusting containerd's own terse error message: (1)
+  this sandbox kills container creation when a cgroup path matches a real
+  kubelet pod's shape (`kubepods/besteffort/...`) combined with a new
+  network namespace — almost certainly because the sandbox VM is itself a
+  pod on a real Kubernetes host and that path is reserved; (2)
+  containerd's default sandbox `oom_score_adj` (-998) is rejected by this
+  sandbox's own resource controls. Both are named, reproducible, and
+  fixed via documented flags (`cgroupsPerQOS: false`,
+  `restrict_oom_score_adj = true`) rather than routed around blindly.
+- **Container-registry blob downloads are blocked everywhere tested**
+  (Docker Hub, GHCR, `registry.k8s.io`, `quay.io`, public ECR) even though
+  each registry's own API is reachable — a different, more precise
+  finding than Session 14's "no Docker daemon." Every image this session
+  needed was built from source (Go binaries compiled locally) or from
+  real Ubuntu packages (`debootstrap` + `apt`, both reachable) instead of
+  pulled. This is a real, working substitute for verifying this repo's
+  own manifests against a real cluster; it is not a substitute for
+  verifying the specific upstream images (`postgres:16-alpine`,
+  `redis:7-alpine`, `otel/opentelemetry-collector-contrib`) this repo's
+  manifests actually name in production.
+- **`terraform apply` remains blocked, precisely re-confirmed rather than
+  re-assumed:** `registry.terraform.io` (the provider registry) is an
+  explicit `403` organization-policy denial this session too, even though
+  the Terraform CLI itself installs fine here (unlike Session 14). Two
+  different, independently-confirmed facts, not one repeated claim.
+- **One real design refinement came out of measurement, not
+  speculation:** continuous health-check polling during three real
+  rolling updates found a small, real, repeatable gap in `backend.yaml`'s
+  `maxUnavailable: 0` guarantee (kube-proxy's Endpoint removal racing the
+  terminating pod). Fixed with a `preStop: sleep 5` — the standard,
+  minimal mitigation — rather than either ignoring the measurement or
+  over-engineering a load-balancer-level fix this sandbox can't verify
+  anyway (no ingress-nginx image, see above).
+- **Evidence saved as files, not just narrated** — this project's own
+  established practice (`00c-evidence-preservation.md`), followed here
+  for every claim above: `docs/project-memory/evidence/session15-*`.
