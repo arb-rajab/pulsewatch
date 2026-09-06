@@ -1,10 +1,17 @@
 # Release Notes
 > Purpose: what changed, for humans
 > Project: pulsewatch (public)
-> Last updated: 2026-09-01
+> Last updated: 2026-09-06
 
 ## Unreleased
 ### Added
+- `GET /api/v1/targets/{target_id}/incidents` (B-002): incident history for
+  a target, newest first, each row carrying a derived `status`
+  (`open`/`resolved`) from `closed_at`. A pure read of the `incidents`
+  table ADR-0002's already-implemented guarded open/close writes
+  (`internal/alerting`) populate — no new incident-detection logic, since
+  that state machine was already built and real-tested before this session
+  (Session 16).
 - A second, production-shaped deployment target: Kubernetes, via
   Terraform (`infra/terraform/` — namespace, secrets, `ingress-nginx`,
   `cert-manager`) and Kustomize-based manifests (`deploy/k8s/` — one
