@@ -1,7 +1,7 @@
 # Decision Log
 > Purpose: why things are the way they are, so decisions are not silently undone
 > Project: pulsewatch (public)
-> Last updated: 2026-09-06 (Session 17)
+> Last updated: 2026-09-07 (Session 18)
 
 Full reasoning for each ADR lives in `docs/adr/`. This log is the
 short-form index — read it first, open the linked ADR for the trade-off
@@ -213,3 +213,52 @@ detail.
   never touching a channel's decrypted destination. This session's actual
   scope was narrower than "wire dispatch into the incident state machine,"
   because that wiring already existed.
+
+## ADR-0007 — Mobile Push as a Dispatch Channel: Fan-Out, Dead Tokens, and Device Registration
+- **Date:** 2026-09-07 · **Status:** accepted · [Full ADR](../adr/ADR-0007-mobile-push-dispatch-channel.md)
+- **Decision:** a third `alert_channels.type`, `'push'`, whose
+  `destination_encrypted` holds a *provider credential* (Firebase
+  service-account JSON, or an APNs `.p8` token-auth object) rather than a
+  single address; a new `device_tokens` table holding the actual delivery
+  addresses (migration `000011`); `alerting.PushDispatcher` fanning one
+  incident transition out over every live token for that channel's
+  provider, via `internal/pushprovider`'s real FCM HTTP v1 and APNs HTTP/2
+  clients (stdlib only, no new module dependency); and
+  `alerting.ChannelRouter` taking over the channel-type-to-implementation
+  decision that `WebhookDispatcher` used to answer for by itself.
+- **The one substantive departure from ADR-0006's retry policy, and why:**
+  a webhook failure is either "retry" or "give up". A push failure has a
+  third shape — an uninstalled app or a rotated token — that must **never**
+  be retried and must be *recorded*, or every future incident pays for it
+  again. `device_tokens.dead_at`/`dead_reason` is that record; transient
+  provider failures still retry on ADR-0006's unchanged backoff; a rejected
+  *credential* aborts the whole fan-out instead of repeating one
+  configuration failure once per registered phone, and never marks a device
+  dead. Dead-marking is only safe because re-registration resurrects a
+  token, so a wrongly-killed device recovers on the operator's next app
+  launch instead of being muted forever.
+- **Must not be silently reversed because:** it is what makes
+  `pulsewatch-mobile` a companion app rather than a smaller copy of the
+  SvelteKit dashboard — a mobile client that polls
+  `GET /targets/{id}/incidents` on a timer has no reason to exist. Removing
+  the dead-token path specifically (the tempting "simplify: retry
+  everything like the webhook does") silently reintroduces unbounded waste
+  on every incident for every uninstalled app, which is the exact failure
+  mode this ADR was written around.
+- **Named, not hidden, limitation:** no notification was delivered to a real
+  device by real FCM or real APNs infrastructure — that needs a Firebase
+  service-account key and an Apple Developer `.p8` with a registered bundle
+  id, real credentials no public repo or CI job can hold. Both protocols
+  are implemented against the providers' real published APIs and exercised
+  against mock servers that speak them (real OAuth 2 JWT-bearer exchange,
+  real paths/headers, real error bodies, cryptographically verified
+  signatures, real HTTP/2 for APNs), never faked into success. Tracked as
+  B-016, the same way B-013 tracks the `registry.terraform.io` block.
+- **Does not reopen ADR-0002 or ADR-0006.** ADR-0002's exactly-once
+  edge-transition guarantee is what gates dispatch, unchanged;
+  `DispatchOutcome` and `alert_dispatches`' one-row-per-attempted-
+  notification shape are unchanged (a fan-out aggregates into that one row
+  and needs no migration). The only amendment is to `LastError`'s meaning:
+  for a fan-out channel it is empty only when *every* live device was
+  reached, so a partial success reports its shortfall rather than hiding
+  behind `delivery_confirmed=true`.

@@ -3,6 +3,9 @@ package operatorapi
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -161,4 +164,37 @@ func recordRequest(r *gin.Engine, req *http.Request) *httptest.ResponseRecorder 
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 	return w
+}
+
+// randomHex gives each test's device token a unique value — device_tokens
+// is a global table these tests don't get an isolated view of, exactly like
+// alert_channels.
+func randomHex(t *testing.T) string {
+	t.Helper()
+	buf := make([]byte, 8)
+	if _, err := rand.Read(buf); err != nil {
+		t.Fatalf("read random suffix: %v", err)
+	}
+	return hex.EncodeToString(buf)
+}
+
+func mustJSON(t *testing.T, v any) []byte {
+	t.Helper()
+	encoded, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("marshal test body: %v", err)
+	}
+	return encoded
+}
+
+// cleanupDeviceToken deletes a registration at test end. Unlike this
+// package's older fixtures (B-006), this one genuinely completes: nothing
+// references device_tokens.
+func cleanupDeviceToken(t *testing.T, pool *pgxpool.Pool, id string) {
+	t.Helper()
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_, _ = pool.Exec(ctx, `DELETE FROM device_tokens WHERE id = $1::uuid`, id)
+	})
 }

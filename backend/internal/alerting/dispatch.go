@@ -34,19 +34,30 @@ type DispatchRequest struct {
 type DispatchOutcome struct {
 	Confirmed bool
 	Attempts  int
-	// LastError is empty when Confirmed is true. Never contains a channel's
-	// destination (FR-023) — every Dispatcher implementation in this package
+	// LastError is empty when the notification fully succeeded. For a
+	// single-destination channel (webhook) that is the same thing as
+	// Confirmed being true. For a fan-out channel (push, ADR-0007) it is
+	// stricter: Confirmed means at least one device was reached, and a
+	// partial success reports its shortfall here rather than hiding it.
+	//
+	// Never contains a channel's destination, a device token, or a provider
+	// credential (FR-023) — every Dispatcher implementation in this package
 	// is required to keep that guarantee itself, not rely on the caller to
 	// scrub it.
 	LastError string
 }
 
-// Dispatcher sends one notification for one channel. WebhookDispatcher is
-// the only real implementation this package ships (ADR-0006): a genuine
-// HTTP POST with retry/backoff for channel.Type == "webhook". Any other
-// channel type (currently just "email") is reported back as not
-// implemented rather than silently pretending success — see
-// WebhookDispatcher.Dispatch.
+// Dispatcher sends one notification for one channel. This package ships two
+// real implementations and one router:
+//
+//   - WebhookDispatcher (ADR-0006) — a genuine HTTP POST with retry/backoff
+//     for channel.Type == "webhook".
+//   - PushDispatcher (ADR-0007) — a genuine FCM HTTP v1 / APNs HTTP/2 send,
+//     fanned out over every live device token, for channel.Type == "push".
+//   - ChannelRouter (ADR-0007) — routes a channel to the implementation for
+//     its type, and reports a type with no implementation (currently just
+//     "email", FR-014) back as not implemented rather than silently
+//     pretending success.
 type Dispatcher interface {
 	Dispatch(ctx context.Context, channel Channel, req DispatchRequest) DispatchOutcome
 }
@@ -194,16 +205,20 @@ func (e *webhookAttemptError) retryable() bool {
 
 // Dispatch implements Dispatcher. For channel.Type == "webhook" it performs
 // a real HTTP POST of webhookPayload, retrying transient failures per this
-// dispatcher's backoff policy (ADR-0006). Any other channel type is
-// reported back as not implemented this session (email, FR-014, is
-// explicitly out of scope — see ADR-0006) rather than silently claiming
-// success or silently doing nothing.
+// dispatcher's backoff policy (ADR-0006).
+//
+// Any other channel type is reported back unconfirmed rather than silently
+// claiming success or silently doing nothing. Since ADR-0007 this is a
+// defensive guard against a mis-wired router, not the production answer for
+// unimplemented channel types: ChannelRouter (router.go) is what decides
+// which Dispatcher a channel type reaches, and what an unimplemented type
+// (today: "email", FR-014 — see B-014) reports back.
 func (d *WebhookDispatcher) Dispatch(ctx context.Context, channel Channel, req DispatchRequest) DispatchOutcome {
 	if channel.Type != "webhook" {
 		return DispatchOutcome{
 			Confirmed: false,
 			Attempts:  1,
-			LastError: fmt.Sprintf("%s channel delivery is not implemented this session (ADR-0006)", channel.Type),
+			LastError: fmt.Sprintf("%s channel delivery is not implemented by the webhook dispatcher", channel.Type),
 		}
 	}
 

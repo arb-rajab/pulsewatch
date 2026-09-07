@@ -98,11 +98,14 @@ func run() error {
 
 	// The agent-facing OTLP ingestion path (internal/agentapi) dispatches
 	// notifications through the identical alerting.Dispatcher/channel-key
-	// construction the scheduler builds for itself (alerting.NewWebhookDispatcher,
-	// alerting.EncryptionKeyFromEnv) — two independent, deterministic reads
-	// of the same environment, not a shared mutable dependency, so no
-	// coupling to the scheduler package is needed here.
-	dispatcher := alerting.NewWebhookDispatcher(nil)
+	// construction the scheduler builds for itself
+	// (alerting.NewDefaultDispatcher, alerting.EncryptionKeyFromEnv) — two
+	// independent, deterministic reads of the same environment, not a
+	// shared mutable dependency, so no coupling to the scheduler package is
+	// needed here. ADR-0007 made that one shared constructor rather than
+	// two hand-assembled dispatcher literals, precisely so adding a third
+	// channel type cannot leave one of these two paths behind.
+	dispatcher := alerting.NewDefaultDispatcher(pool, nil)
 	channelKey, keyErr := alerting.EncryptionKeyFromEnv()
 	if keyErr != nil {
 		slog.Warn("ALERT_CHANNEL_ENCRYPTION_KEY not configured; agent-reported alert dispatch will be skipped if any alert_channels row exists", "error", keyErr)

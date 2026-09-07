@@ -45,9 +45,12 @@ type Scheduler struct {
 
 // New constructs a Scheduler against the given pool. It starts no
 // goroutines — call Run for that. The dispatcher defaults to
-// alerting.WebhookDispatcher (ADR-0006: a real HTTP POST with retry/backoff
-// for "webhook" channels; "email" channels are reported as not implemented
-// this session, never silently dropped) — override it with SetDispatcher.
+// alerting.NewDefaultDispatcher: a ChannelRouter over
+// alerting.WebhookDispatcher (ADR-0006, a real HTTP POST with retry/backoff
+// for "webhook" channels) and alerting.PushDispatcher (ADR-0007, a real
+// FCM/APNs send fanned out over registered device tokens for "push"
+// channels). "email" channels are still reported as not implemented, never
+// silently dropped (B-014). Override it with SetDispatcher.
 func New(pool *pgxpool.Pool, cfg Config, logger *slog.Logger) (*Scheduler, error) {
 	owner, err := newOwnerID()
 	if err != nil {
@@ -69,7 +72,7 @@ func New(pool *pgxpool.Pool, cfg Config, logger *slog.Logger) (*Scheduler, error
 		ownerID:    owner,
 		jobs:       make(chan CheckJob, cfg.WorkerPoolSize),
 		logger:     logger,
-		dispatcher: alerting.NewWebhookDispatcher(nil),
+		dispatcher: alerting.NewDefaultDispatcher(pool, nil),
 		channelKey: channelKey,
 	}, nil
 }
@@ -79,7 +82,7 @@ func New(pool *pgxpool.Pool, cfg Config, logger *slog.Logger) (*Scheduler, error
 // gauge of currently-held leases per process).
 func (s *Scheduler) OwnerID() string { return s.ownerID }
 
-// SetDispatcher overrides the default WebhookDispatcher. Exists for tests
+// SetDispatcher overrides the default ChannelRouter. Exists for tests
 // that need to observe dispatch calls directly rather than only via
 // alert_dispatches rows and log output; a future session wiring in a real
 // notification provider would call this too.

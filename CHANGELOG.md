@@ -7,6 +7,12 @@ versioning follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- Mobile push alert delivery (ADR-0007): a `"push"` alert channel sends a
+  real notification through FCM HTTP v1 or APNs HTTP/2 to every device
+  registered via the new `/api/v1/device-tokens` endpoints. Dead device
+  tokens (uninstalled app, rotated token) are recorded and never retried;
+  transient provider failures still retry; re-registering a device
+  resurrects it. No new Go module dependency.
 - Repository governance: framework allocation ledger row confirmed
   (`UNIQUE` — Go + Gin (backend) + SvelteKit (frontend), no flagship
   collision).

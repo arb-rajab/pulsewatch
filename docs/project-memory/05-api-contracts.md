@@ -151,11 +151,34 @@ named.
 
 | Method | Path | Purpose |
 |---|---|---|
-| `POST` | `/api/v1/alert-channels` | Configure a webhook/email channel |
+| `POST` | `/api/v1/alert-channels` | Configure a webhook/email/push channel |
 | `GET` | `/api/v1/alert-channels` | List (never includes the destination) |
 | `GET` | `/api/v1/alert-channels/{id}` | Detail (never includes the destination) |
 | `PUT` | `/api/v1/alert-channels/{id}/secret` | Replace the destination/credential — `204`, no body |
 | `DELETE` | `/api/v1/alert-channels/{id}` | Delete |
+
+### Mobile push device registration (ADR-0007)
+
+| Method | Path | Purpose |
+|---|---|---|
+| `POST` | `/api/v1/device-tokens` | Register or re-register this device — upsert on `(provider, token)`, so `200` rather than `201`; clears a previous dead-marking |
+| `GET` | `/api/v1/device-tokens` | List this operator's devices, incl. revoked/dead ones and why (never the token value) |
+| `DELETE` | `/api/v1/device-tokens/{id}` | Unregister (sign-out) — revokes, keeping the row `alert_dispatches` history depends on |
+
+These are the mobile companion app's (`pulsewatch-mobile`) own calls, and
+they add **no new identity type**: they sit behind the same
+`operatorSession` cookie the dashboard uses, so "there are only ever two
+disjoint identity types" (below) still holds — the app is a second *client*
+of the operator identity, not a third principal. `device_tokens.operator_id`
+is however this schema's first genuinely per-account resource, so
+`RequireOperator` now stashes the verified operator id for handlers to read
+(`OperatorIDFrom`) rather than verifying and discarding it as it did
+through Session 17.
+
+A push channel's `destination` is the **provider credential** (a Firebase
+service-account JSON or an APNs token-auth object), not a delivery address —
+the devices above are the addresses. It gets the identical FR-023 treatment
+a webhook URL gets, for a strictly more sensitive secret. See ADR-0007.
 
 ### Agent registration and machine auth (ADR-0003, roles matrix)
 

@@ -27,8 +27,16 @@ type alertChannelResponse struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// validAlertChannelType mirrors alert_channels' own CHECK constraint
+// (migrations 000008 and, for "push", 000011). "push" was added by
+// ADR-0007: a push channel's destination is the *provider credential*
+// (an FCM service-account JSON or an APNs token-auth object), not a single
+// address — which is exactly why it needs no special handling here. It is
+// encrypted at rest by the same EncryptDestination call, for a strictly
+// more sensitive secret, and it is structurally unreadable through this
+// package's responses for the same reason a webhook URL is.
 func validAlertChannelType(t string) bool {
-	return t == "webhook" || t == "email"
+	return t == "webhook" || t == "email" || t == "push"
 }
 
 // CreateAlertChannel is POST /alert-channels (FR-013/FR-014/FR-023):
@@ -44,7 +52,7 @@ func CreateAlertChannel(pool *pgxpool.Pool, channelKey []byte) gin.HandlerFunc {
 			return
 		}
 		if !validAlertChannelType(req.Type) {
-			writeFieldError(c, http.StatusUnprocessableEntity, "validation_error", "type must be either \"webhook\" or \"email\"", "type")
+			writeFieldError(c, http.StatusUnprocessableEntity, "validation_error", "type must be one of \"webhook\", \"email\", or \"push\"", "type")
 			return
 		}
 		if channelKey == nil {

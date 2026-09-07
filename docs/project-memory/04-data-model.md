@@ -21,6 +21,7 @@ erDiagram
     TARGETS }o--o| AGENTS : "assigned to (nullable)"
     INCIDENTS ||--o{ ALERT_DISPATCHES : "triggers"
     ALERT_CHANNELS ||--o{ ALERT_DISPATCHES : "receives"
+    OPERATORS ||--o{ DEVICE_TOKENS : "registers"
 
     TARGETS {
         uuid id PK
@@ -73,9 +74,22 @@ erDiagram
     }
     ALERT_CHANNELS {
         uuid id PK
-        text type "webhook | email"
-        text destination_encrypted "FR-023, write-only after creation"
+        text type "webhook | email | push (ADR-0007)"
+        text destination_encrypted "FR-023, write-only after creation; for push, the provider credential"
         timestamptz created_at
+    }
+    DEVICE_TOKENS {
+        uuid id PK
+        uuid operator_id FK "ON DELETE CASCADE"
+        text provider "fcm | apns"
+        text platform "ios | android"
+        text token "provider-issued; never returned by any API"
+        timestamptz created_at
+        timestamptz last_registered_at
+        timestamptz last_delivered_at "nullable"
+        timestamptz revoked_at "nullable — unregistered by the app"
+        timestamptz dead_at "nullable — provider says permanently undeliverable"
+        text dead_reason "nullable — ADR-0007's fixed vocabulary, never the token"
     }
     ALERT_DISPATCHES {
         bigint id PK
@@ -272,6 +286,12 @@ is "excluded," not "the dashboard must explain why":
   opened_at)` for incident-history queries (US-009, FR-022).
 - `agents`: unique index on credential identifier; lookups are always by
   `agent_id`, no additional index needed for staleness checks.
+- `device_tokens` (ADR-0007): unique `(provider, token)` — the key the
+  registration upsert conflicts on; **partial** index on `(provider) WHERE
+  revoked_at IS NULL AND dead_at IS NULL`, which is the one query push
+  dispatch runs on the hot path (every live token for one provider), with
+  dead and revoked rows kept for operator visibility but never scanned
+  during fan-out; index on `operator_id` for the registration API's list.
 
 ## Migration approach and rollback
 
@@ -295,6 +315,12 @@ are written, not a generic reversibility promise made in the abstract now.
   genuine historical value, and no FR/NFR asks for their deletion.
 - `alert_channels`: retained until the operator replaces or deletes it
   (`02-requirements.md` data classification).
+- `device_tokens` (ADR-0007): retained for the life of the operator account
+  (`ON DELETE CASCADE` on `operators`). Unregistering a device sets
+  `revoked_at` rather than deleting the row, because `alert_dispatches`'
+  history of which incidents were notified depends on the row surviving;
+  the same applies to a token the provider declared dead. Both leave the
+  fan-out set immediately.
 
 ## Session 12 addendum: the hourly rollup job, real, implemented
 
@@ -450,3 +476,33 @@ three test runs were each deleted from the real database after confirming,
 by `created_at`, that they were exactly this session's own test-run
 artifacts and not real or prior-session data — see this session's own
 handoff for the full before/after evidence.
+
+## Session 18 addendum: `device_tokens`, and why the token itself is not encrypted
+
+ADR-0007 adds `device_tokens` alongside `alert_channels` rather than
+extending it: a push channel holds one provider *credential*, and an
+operator's devices register themselves against it many-to-one, from a
+different client (the mobile app), on a different cadence, with a different
+lifecycle. A token dies when an app is uninstalled; a credential dies when
+an operator rotates it.
+
+`alert_channels.destination_encrypted` is AES-256-GCM encrypted at rest for
+a push channel exactly as it is for a webhook URL — for a strictly more
+sensitive secret, since a Firebase service-account key or an APNs `.p8`
+grants the ability to push to every device of that app. `device_tokens.token`
+is deliberately **not** encrypted, and this is a decision rather than an
+oversight:
+
+1. It is not a credential. Holding a device token grants nothing without
+   the provider credential that *is* encrypted.
+2. It is rotated by the device itself, continuously, and is inert once the
+   app is uninstalled — which is the `dead_at` path.
+3. Registration must match it by exact value on every re-registration (an
+   upsert on `(provider, token)`). Randomised-nonce AES-GCM ciphertext
+   structurally cannot be matched that way; the only alternative is a
+   deterministic scheme, which is materially weaker than simply being
+   honest that this column is not a secret.
+
+It is nonetheless never readable back: `alerting.DeviceTokenRecord` — the
+one shape the operator API returns — has no field capable of carrying it,
+the same structural discipline `AlertChannel` applies to a destination.
