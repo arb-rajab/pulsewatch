@@ -278,6 +278,18 @@ and deep-links on a tapped notification using the `incident_id`/`target_id`/
 `kind` data keys `PushDispatcher` sends. **That data-key contract is the
 integration surface between the two repos** — changing those three key
 names is a breaking change for the app, not an internal refactor.
+
+**Status of that companion repository, stated plainly:** the app was built
+and fully verified in this same session — real React Native 0.82.1 project
+with real Android/iOS native configuration, 62 tests across 9 suites, both
+platform Metro production bundles building, `npm audit` clean at zero — but
+**it has not been published to GitHub.** This session's GitHub credential is
+scoped to `arb-rajab/pulsewatch` and cannot create a repository; both
+`create_repository` and the REST equivalent were refused. Creating
+`arb-rajab/pulsewatch-mobile` (empty, public) is a one-time human action,
+after which the app's single prepared commit can be pushed to it unchanged.
+Nothing in *this* repository depends on that happening: the push channel,
+its endpoints and its tests are complete and independent.
 **Repository state:** branch `main` (this session developed on
 `claude/push-notifications-pulsewatch-mobile-efslai` per its own
 worker-branch instructions), unreleased (pre-v0.1.0). B-018 closed;
