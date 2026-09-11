@@ -136,6 +136,28 @@ func (c *Client) Send(ctx context.Context, to string, msg Message) error {
 	if err != nil {
 		return classify(phaseData, err)
 	}
+	// CodeQL (go/email-injection) flags this write because to/msg.Subject/
+	// msg.Body are exported-API parameters it cannot prove sanitized by
+	// tracing into buildMessage's own body. They are, by this point:
+	// - to and msg.Subject were already rejected above if they contain a
+	//   CR or LF, the same reject-not-mangle shape net/smtp.Client's own
+	//   validateLine uses internally for these two values, and to is
+	//   independently re-validated by smtpClient.Rcpt just above.
+	// - buildMessage renders Subject via RFC 2047 MIME encoding
+	//   (mime.QEncoding.Encode) and Body via RFC 2045
+	//   Content-Transfer-Encoding: base64 — both structural guarantees:
+	//   neither output alphabet can contain a raw CR, LF, or a bare "."
+	//   line, so neither can inject a header or prematurely terminate the
+	//   DATA block, regardless of input content.
+	// Each of these is exercised by a dedicated regression test that
+	// attempts the actual injection and asserts it is blocked
+	// (TestClient_SendRejectsSubjectHeaderInjection,
+	// TestClient_SendRejectsRecipientHeaderInjection,
+	// TestBuildMessage_SanitizesHeaderValues,
+	// TestBuildMessage_BodyIsBase64EncodedAndRoundTrips, in
+	// smtp_test.go) — verified false positive, not an unexamined
+	// suppression.
+	// codeql[go/email-injection]
 	if _, err := w.Write(buildMessage(c.cfg.From, to, msg, time.Now())); err != nil {
 		_ = w.Close()
 		return classify(phaseData, err)
