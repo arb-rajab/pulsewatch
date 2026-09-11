@@ -296,6 +296,39 @@ func TestClient_SendDeliversOverPlaintext(t *testing.T) {
 	}
 }
 
+// TestClient_SendSanitizesSubjectHeaderInjection proves a Subject
+// containing an embedded CRLF cannot inject a forged header or terminate
+// the header block early — the classic email header-injection
+// vulnerability class Client.Send's exported Message.Subject would
+// otherwise be a real sink for. The injected "Bcc" line must never appear
+// as its own header line in the message this package actually sends.
+func TestClient_SendSanitizesSubjectHeaderInjection(t *testing.T) {
+	srv := newFakeSMTPServer(t)
+	srv.start()
+	client, err := NewClient(baseConfig(srv))
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	malicious := Message{
+		Subject: "hi\r\nBcc: attacker@evil.invalid\r\nX-Injected: yes",
+		Body:    "body",
+	}
+	if err := client.Send(t.Context(), "ops@example.invalid", malicious); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+
+	body := srv.sentBody()
+	for _, line := range strings.Split(body, "\r\n") {
+		if strings.HasPrefix(line, "Bcc:") || strings.HasPrefix(line, "X-Injected:") {
+			t.Fatalf("header injection succeeded: found injected header line %q in:\n%s", line, body)
+		}
+	}
+	if !strings.Contains(body, "Subject: hiBcc: attacker@evil.invalidX-Injected: yes") {
+		t.Fatalf("expected the CR/LF-stripped subject on one line, got:\n%s", body)
+	}
+}
+
 func TestClient_SendUpgradesToSTARTTLSWhenAdvertised(t *testing.T) {
 	srv := newFakeSMTPServer(t)
 	srv.offerSTARTTLS = true

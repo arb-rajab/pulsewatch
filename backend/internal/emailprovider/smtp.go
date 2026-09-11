@@ -140,16 +140,38 @@ func (c *Client) tlsConfig() *tls.Config {
 	return &tls.Config{ServerName: c.cfg.Host, RootCAs: c.cfg.RootCAs}
 }
 
+// sanitizeHeaderValue strips CR and LF from a value before it is written
+// into an RFC 5322 header field, so an embedded CRLF in caller-supplied
+// input (Message.Subject, primarily) cannot inject an additional header
+// line or terminate the header block early. It is deliberately a strip,
+// not a reject-and-error: a rendered subject line is not this package's
+// job to validate at the caller's expense, only to make impossible to turn
+// into a different email than the one it renders as.
+func sanitizeHeaderValue(v string) string {
+	v = strings.ReplaceAll(v, "\r", "")
+	v = strings.ReplaceAll(v, "\n", "")
+	return v
+}
+
 // buildMessage renders msg as a minimal, valid RFC 5322 message: headers,
 // a blank line, then the body, entirely CRLF-terminated (RFC 5321's DATA
-// command requires it). to is only ever a value that has already passed
-// smtp.Client.Rcpt's own line-injection check (Send calls Rcpt before this),
-// so it cannot carry a stray CR/LF into the To: header here.
+// command requires it).
+//
+// Every header value is passed through sanitizeHeaderValue first. to has
+// already passed smtp.Client.Rcpt's own line-injection check (Send calls
+// Rcpt before this) and from is operator configuration, not per-message
+// input, but msg.Subject is caller-supplied per send — Client.Send and
+// Message are this package's exported API, and a Subject containing an
+// embedded CR/LF could otherwise inject arbitrary additional headers (a
+// forged Bcc, a spoofed From) or terminate the header block early: the
+// classic email header-injection vulnerability class. Sanitizing every
+// header value uniformly here, at the one place that actually writes them,
+// is the defense — not trusting each call site to have done it.
 func buildMessage(from, to string, msg Message, sentAt time.Time) []byte {
 	var b strings.Builder
-	b.WriteString("From: " + from + "\r\n")
-	b.WriteString("To: " + to + "\r\n")
-	b.WriteString("Subject: " + msg.Subject + "\r\n")
+	b.WriteString("From: " + sanitizeHeaderValue(from) + "\r\n")
+	b.WriteString("To: " + sanitizeHeaderValue(to) + "\r\n")
+	b.WriteString("Subject: " + sanitizeHeaderValue(msg.Subject) + "\r\n")
 	b.WriteString("Date: " + sentAt.Format(time.RFC1123Z) + "\r\n")
 	b.WriteString("MIME-Version: 1.0\r\n")
 	b.WriteString("Content-Type: text/plain; charset=\"utf-8\"\r\n")
