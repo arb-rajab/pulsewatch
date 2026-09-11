@@ -1,7 +1,7 @@
 # Decision Log
 > Purpose: why things are the way they are, so decisions are not silently undone
 > Project: pulsewatch (public)
-> Last updated: 2026-09-07 (Session 18)
+> Last updated: 2026-09-11 (Session 19)
 
 Full reasoning for each ADR lives in `docs/adr/`. This log is the
 short-form index — read it first, open the linked ADR for the trade-off
@@ -262,3 +262,20 @@ detail.
   for a fan-out channel it is empty only when *every* live device was
   reached, so a partial success reports its shortfall rather than hiding
   behind `delivery_confirmed=true`.
+
+**Session 19 addendum (B-017, device list dashboard) — `revoked_at` added
+to the read surface.** `device_tokens.revoked_at` (this ADR's own column)
+was written by `RegisterDeviceToken`/`RevokeDeviceToken` from the start,
+correctly excluded from `loadLiveDeviceTokens`'s fan-out `WHERE` clause,
+but never selected by `ListDeviceTokens` or present on the `DeviceToken`
+OpenAPI schema — nothing had consumed it, since the mobile app has no
+reason to display its own revocation state back to itself. This was found
+by hand, not by a pre-existing test: `DELETE /api/v1/device-tokens/{id}`
+returned `204` and the fan-out set genuinely shrank, but the same operator's
+next `GET` still showed that device as indistinguishable from "Active." Not
+a design decision (nothing about the write path, the fan-out query, or
+ADR-0007's schema changed) — a read-path oversight, closed by adding
+`revoked_at` to `DeviceTokenRecord`, `ListDeviceTokens`'s `SELECT`, and the
+`DeviceToken` schema. Real operator/backend regression test:
+`TestListAndUnregisterDeviceTokens` now asserts `revoked_at` is non-nil on
+the list response after a revoke, not just that the row is still present.

@@ -7,6 +7,12 @@ versioning follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- Device list dashboard (B-017): `/dashboard/devices` shows an operator's
+  registered devices (platform, registered date, last delivery,
+  active/dead/revoked status) with a manual revoke action against
+  `DELETE /api/v1/device-tokens/{id}`. `GET /api/v1/device-tokens` and the
+  `DeviceToken` schema now also return `revoked_at`, which was previously
+  written but never read back.
 - Mobile push alert delivery (ADR-0007): a `"push"` alert channel sends a
   real notification through FCM HTTP v1 or APNs HTTP/2 to every device
   registered via the new `/api/v1/device-tokens` endpoints. Dead device

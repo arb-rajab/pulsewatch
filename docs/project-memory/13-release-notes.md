@@ -5,6 +5,15 @@
 
 ## Unreleased
 ### Added
+- Device list in the dashboard (B-017): the SvelteKit dashboard now has a
+  `/dashboard/devices` page listing every device an operator has
+  registered for mobile push (platform, registration date, last
+  successful delivery, and active/dead/revoked status), with a manual
+  revoke action wired to the existing `DELETE /api/v1/device-tokens/{id}`
+  endpoint. Also fixes a read-path gap this feature surfaced: a revoked
+  device's `revoked_at` is now returned by `GET /api/v1/device-tokens`
+  and included in the `DeviceToken` schema — previously written correctly
+  since the push channel shipped, but never read back anywhere.
 - Mobile push as a third alert channel (B-018, ADR-0007): opening or
   resolving an incident now sends a real push notification, through
   Firebase Cloud Messaging's HTTP v1 API or Apple's APNs HTTP/2 API, to
