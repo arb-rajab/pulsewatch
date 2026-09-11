@@ -279,3 +279,66 @@ ADR-0007's schema changed) — a read-path oversight, closed by adding
 `DeviceToken` schema. Real operator/backend regression test:
 `TestListAndUnregisterDeviceTokens` now asserts `revoked_at` is non-nil on
 the list response after a revoke, not just that the row is still present.
+
+## ADR-0008 — Email as a Dispatch Channel: SMTP Delivery and Retry Semantics
+- **Date:** 2026-09-11 · **Status:** accepted · [Full ADR](../adr/ADR-0008-email-dispatch-channel.md)
+- **Decision:** `alerting.EmailDispatcher` — a real SMTP send
+  (`internal/emailprovider`, RFC 5321/3207/4954 spoken directly over
+  `net/smtp`, no new module dependency) with STARTTLS and implicit-TLS
+  support — is the real `Dispatcher` for `"email"` channels, registered
+  alongside `WebhookDispatcher`/`PushDispatcher` in
+  `alerting.NewDefaultDispatcher`. It is `WebhookDispatcher`'s sibling, not
+  `PushDispatcher`'s: an email channel has one destination (the recipient
+  address, already a valid `alert_channels.type` since migration `000008`,
+  Session 6 — **no schema or endpoint change was needed for B-014's
+  registration side**, only delivery was ever stubbed), so it reuses
+  ADR-0006's exact retry/backoff policy rather than push's fan-out/
+  dead-token shape.
+- **Retryable vs. not, reusing ADR-0006's own convention for SMTP:** a `4xx`
+  reply (any phase) or a network/transport failure retries with ADR-0006's
+  unchanged backoff. A `5xx` on `RCPT TO`/`MAIL FROM`/`DATA` — the classic
+  case being `550` "mailbox unavailable," SMTP's own hard-bounce signal —
+  is `KindPermanent`: one attempt, never retried, the SMTP-protocol sibling
+  of ADR-0007's dead-token case. A `5xx` (or a non-protocol refusal) on
+  `AUTH` is `KindCredential`: also never retried, but never blamed on the
+  recipient — it's the operator's own relay account, not the address, that
+  needs fixing.
+- **Deliberately narrower than ADR-0007's dead-token design, and why:**
+  push needed `device_tokens.dead_at` because one credential fans out to
+  *N* tokens and a wrongly-live dead one gets retried forever otherwise.
+  An email channel has exactly one destination per row — the same shape a
+  permanently broken webhook URL already has, and that has never needed a
+  persistent-suppression column either. A `550` is recorded honestly in
+  that row's own `alert_dispatches.last_error`, visible on the very next
+  incident; a second, email-only suppression mechanism for a problem
+  webhook already lives with unremarked would have been new, unrequested
+  machinery, not a gap this session found evidence for.
+- **Must not be silently reversed because:** it closes B-014, the last
+  planned dispatch channel from ADR-0006's original three-channel scope
+  (webhook/push/email) — reverting to "not implemented" would regress a
+  real, working delivery path back to the honest-but-inert stub ADR-0006
+  shipped for it.
+- **Named, not hidden, limitation:** no email was delivered by a real SMTP
+  relay to a real inbox — needs a real relay account (Gmail app password,
+  SES/SendGrid SMTP credentials, or similar) this sandbox cannot hold or
+  reach. The client is implemented against the real, published protocol and
+  exercised against a real server (`net.Listener` + `net/textproto`, not a
+  mocked `Send`) that speaks it, the same honest-gap pattern B-013/B-016
+  already established rather than faked into success.
+- **Confirmed, while starting this session, that the registration side was
+  already real:** `operatorapi.CreateAlertChannel` has never special-cased
+  `"email"` — `POST /api/v1/alert-channels` with `{"type":"email",...}`
+  already worked, encrypted at rest, since Session 6, well before ADR-0006
+  existed to build a sender for it. This session's actual scope was
+  narrower than "build email channel support" for the same reason
+  ADR-0006 found webhook's own incident-to-dispatch wiring already built:
+  only the one real gap (delivery) needed closing.
+- **B-006 test-fixture-cleanup gap, re-confirmed from a new angle:** unlike
+  webhook/push (whose destination directly names a per-test server/
+  credential), an email channel's destination is only the recipient
+  address — the relay dialed is the dispatcher's own shared `Config`. A
+  leftover channel row from an earlier test in the same package therefore
+  genuinely redials whatever fake SMTP server the *current* test is
+  running, not a harmlessly-closed old one. Worked around in this session's
+  own tests (unique recipient addresses, assertions scoped by recipient);
+  B-006 itself stays open, out of this session's scope.

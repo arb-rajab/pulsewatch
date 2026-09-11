@@ -21,7 +21,7 @@ import (
 // applies to the AlertChannel schema, applied here on the read side too.
 type Channel struct {
 	ID          string
-	Type        string // "webhook" | "email"
+	Type        string // "webhook" | "email" | "push"
 	destination string
 }
 

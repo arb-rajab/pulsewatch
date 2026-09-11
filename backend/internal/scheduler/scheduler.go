@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/arb-rajab/pulsewatch/backend/internal/alerting"
+	"github.com/arb-rajab/pulsewatch/backend/internal/emailprovider"
 )
 
 // dbOpTimeout bounds the claim/release Postgres round-trips themselves —
@@ -47,10 +48,10 @@ type Scheduler struct {
 // goroutines — call Run for that. The dispatcher defaults to
 // alerting.NewDefaultDispatcher: a ChannelRouter over
 // alerting.WebhookDispatcher (ADR-0006, a real HTTP POST with retry/backoff
-// for "webhook" channels) and alerting.PushDispatcher (ADR-0007, a real
+// for "webhook" channels), alerting.PushDispatcher (ADR-0007, a real
 // FCM/APNs send fanned out over registered device tokens for "push"
-// channels). "email" channels are still reported as not implemented, never
-// silently dropped (B-014). Override it with SetDispatcher.
+// channels), and alerting.EmailDispatcher (B-014, a real SMTP send for
+// "email" channels). Override it with SetDispatcher.
 func New(pool *pgxpool.Pool, cfg Config, logger *slog.Logger) (*Scheduler, error) {
 	owner, err := newOwnerID()
 	if err != nil {
@@ -66,13 +67,19 @@ func New(pool *pgxpool.Pool, cfg Config, logger *slog.Logger) (*Scheduler, error
 		channelKey = nil
 	}
 
+	emailCfg, emailErr := emailprovider.ConfigFromEnv()
+	if emailErr != nil {
+		logger.Warn("SMTP relay not configured; email alert dispatch will be skipped if any alert_channels row exists", "error", emailErr)
+		emailCfg = emailprovider.Config{}
+	}
+
 	return &Scheduler{
 		pool:       pool,
 		cfg:        cfg,
 		ownerID:    owner,
 		jobs:       make(chan CheckJob, cfg.WorkerPoolSize),
 		logger:     logger,
-		dispatcher: alerting.NewDefaultDispatcher(pool, nil),
+		dispatcher: alerting.NewDefaultDispatcher(pool, nil, emailCfg),
 		channelKey: channelKey,
 	}, nil
 }

@@ -1,10 +1,35 @@
 # Release Notes
 > Purpose: what changed, for humans
 > Project: pulsewatch (public)
-> Last updated: 2026-09-07
+> Last updated: 2026-09-11
 
 ## Unreleased
 ### Added
+- Real email alert delivery (B-014, ADR-0008): opening or resolving an
+  incident now sends an actual email, over real SMTP (with STARTTLS or
+  implicit TLS, and relay authentication when configured), to every
+  configured `"email"` alert channel. Registering an email channel needed
+  no new endpoint — `POST /api/v1/alert-channels` has accepted
+  `"type":"email"` since this project's earliest alerting schema — only
+  delivery was previously stubbed. The new `SMTP_HOST`/`SMTP_PORT`/
+  `SMTP_USERNAME`/`SMTP_PASSWORD`/`SMTP_FROM_ADDRESS`/`SMTP_IMPLICIT_TLS`
+  environment variables configure the one outgoing relay account a
+  self-hosted install uses; unset (the default), an email channel gets an
+  honest, recorded "not configured" failure rather than silence.
+
+  Like webhook, a transient failure (a `4xx` SMTP reply, a network error)
+  retries on the existing backoff; unlike webhook, a hard bounce (a `5xx`
+  reply rejecting the recipient — "mailbox unavailable" being the classic
+  case) is recorded and never retried, and a rejected relay login is
+  recorded distinctly from a bad recipient address, so the two failure
+  modes don't get confused during troubleshooting.
+
+  **Named limitation:** no email was delivered to a real inbox by a real
+  SMTP relay this session — that needs a real relay account (a Gmail app
+  password, SES/SendGrid SMTP credentials, or similar) no public repo or
+  CI job can hold. The client is implemented against the real published
+  SMTP/STARTTLS/AUTH protocols and verified against a real server speaking
+  them, never faked into success. Tracked as a follow-up alongside B-016.
 - Device list in the dashboard (B-017): the SvelteKit dashboard now has a
   `/dashboard/devices` page listing every device an operator has
   registered for mobile push (platform, registration date, last

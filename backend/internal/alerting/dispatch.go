@@ -47,17 +47,20 @@ type DispatchOutcome struct {
 	LastError string
 }
 
-// Dispatcher sends one notification for one channel. This package ships two
-// real implementations and one router:
+// Dispatcher sends one notification for one channel. This package ships
+// three real implementations and one router:
 //
 //   - WebhookDispatcher (ADR-0006) — a genuine HTTP POST with retry/backoff
 //     for channel.Type == "webhook".
 //   - PushDispatcher (ADR-0007) — a genuine FCM HTTP v1 / APNs HTTP/2 send,
 //     fanned out over every live device token, for channel.Type == "push".
+//   - EmailDispatcher (B-014) — a genuine SMTP send with retry/backoff for
+//     channel.Type == "email".
 //   - ChannelRouter (ADR-0007) — routes a channel to the implementation for
-//     its type, and reports a type with no implementation (currently just
-//     "email", FR-014) back as not implemented rather than silently
-//     pretending success.
+//     its type, and reports a type with no implementation back as not
+//     implemented rather than silently pretending success. Every type
+//     alert_channels' own CHECK constraint allows has a real implementation
+//     today; this path is now a defensive guard against a mis-wired router.
 type Dispatcher interface {
 	Dispatch(ctx context.Context, channel Channel, req DispatchRequest) DispatchOutcome
 }
@@ -210,9 +213,8 @@ func (e *webhookAttemptError) retryable() bool {
 // Any other channel type is reported back unconfirmed rather than silently
 // claiming success or silently doing nothing. Since ADR-0007 this is a
 // defensive guard against a mis-wired router, not the production answer for
-// unimplemented channel types: ChannelRouter (router.go) is what decides
-// which Dispatcher a channel type reaches, and what an unimplemented type
-// (today: "email", FR-014 — see B-014) reports back.
+// a real channel type: ChannelRouter (router.go) is what decides which
+// Dispatcher a channel type reaches in production.
 func (d *WebhookDispatcher) Dispatch(ctx context.Context, channel Channel, req DispatchRequest) DispatchOutcome {
 	if channel.Type != "webhook" {
 		return DispatchOutcome{

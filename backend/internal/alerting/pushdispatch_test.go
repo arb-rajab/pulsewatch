@@ -578,11 +578,25 @@ func TestPushDispatcher_UnusableCredentialIsRecordedNotRetried(t *testing.T) {
 	}
 }
 
-// TestChannelRouter_RoutesByTypeAndKeepsEmailHonest proves ADR-0007's one
-// structural change to ADR-0006's dispatch path: two real dispatchers now
-// coexist, each channel reaches the right one, and a type with no
-// implementation is still reported as not implemented rather than dropped.
-func TestChannelRouter_RoutesByTypeAndKeepsEmailHonest(t *testing.T) {
+// fullRouter wires all three real dispatchers (webhook, push, email) at
+// test-speed backoff — what NewDefaultDispatcher wires in production as of
+// B-014, now that email is a third real implementation rather than the
+// permanently-"not implemented" case ADR-0006/ADR-0007 originally routed
+// through.
+func fullRouter(pool *pgxpool.Pool, pushSrv *mockFCM, emailSrv *fakeSMTPServer, logger *slog.Logger) *ChannelRouter {
+	return NewChannelRouter(map[string]Dispatcher{
+		"webhook": fastDispatcher(),
+		"push":    fastPushDispatcher(pool, pushSrv, logger),
+		"email":   fastEmailDispatcher(emailSrv),
+	})
+}
+
+// TestChannelRouter_RoutesEachTypeToItsRealDispatcher proves ADR-0007's
+// structural change to ADR-0006's dispatch path, completed by B-014: every
+// channel type alert_channels' own CHECK constraint allows now has a real
+// dispatcher, each channel reaches the right one in the same NotifyChannels
+// call, and every one is genuinely delivered — not just routed.
+func TestChannelRouter_RoutesEachTypeToItsRealDispatcher(t *testing.T) {
 	pool := testPool(t)
 	targetID := insertTestTargetRow(t, pool)
 	operatorID := insertTestOperatorRow(t, pool)
@@ -595,10 +609,13 @@ func TestChannelRouter_RoutesByTypeAndKeepsEmailHonest(t *testing.T) {
 	defer webhookSrv.Close()
 
 	pushSrv := newMockFCM(t, fcmAccepted)
+	emailSrv := newFakeSMTPServer(t)
+	emailSrv.start()
+	emailRecipient := "ops-router-test-" + randomSuffix(t) + "@example.invalid"
 
 	webhookChannelID := insertTestAlertChannel(t, pool, "webhook", webhookSrv.URL)
 	pushChannelID := insertTestPushChannel(t, pool, pushSrv)
-	emailChannelID := insertTestAlertChannel(t, pool, "email", "ops@example.invalid")
+	emailChannelID := insertTestAlertChannel(t, pool, "email", emailRecipient)
 	insertTestDeviceToken(t, pool, operatorID, "fcm", "android", "fcm-token-router-"+randomSuffix(t))
 
 	req, err := OpenIncident(t.Context(), pool, targetID)
@@ -607,13 +624,16 @@ func TestChannelRouter_RoutesByTypeAndKeepsEmailHonest(t *testing.T) {
 	}
 
 	logger := slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil))
-	NotifyChannels(t.Context(), pool, pushRouter(pool, pushSrv, logger), testEncryptionKey, *req, logger)
+	NotifyChannels(t.Context(), pool, fullRouter(pool, pushSrv, emailSrv, logger), testEncryptionKey, *req, logger)
 
 	if got := webhookCalls.Load(); got != 1 {
 		t.Fatalf("expected the webhook channel to reach the webhook dispatcher exactly once, got %d", got)
 	}
 	if got := pushSrv.attempts.Load(); got != 1 {
 		t.Fatalf("expected the push channel to reach the push dispatcher exactly once, got %d", got)
+	}
+	if got := emailSrv.attemptsFor(emailRecipient); got != 1 {
+		t.Fatalf("expected the email channel to reach the email dispatcher exactly once, got %d", got)
 	}
 
 	if confirmed, _, _ := fetchDispatchRow(t, pool, req.IncidentID, webhookChannelID); !confirmed {
@@ -622,11 +642,28 @@ func TestChannelRouter_RoutesByTypeAndKeepsEmailHonest(t *testing.T) {
 	if confirmed, _, _ := fetchDispatchRow(t, pool, req.IncidentID, pushChannelID); !confirmed {
 		t.Fatal("expected the push dispatch to be confirmed")
 	}
-	emailConfirmed, _, emailLastError := fetchDispatchRow(t, pool, req.IncidentID, emailChannelID)
-	if emailConfirmed {
-		t.Fatal("expected the email channel to stay unconfirmed (B-014)")
+	if confirmed, _, lastError := fetchDispatchRow(t, pool, req.IncidentID, emailChannelID); !confirmed {
+		t.Fatalf("expected the email dispatch to be confirmed (last_error=%q)", lastError)
 	}
-	if !strings.Contains(emailLastError, "not implemented") {
-		t.Fatalf("expected email's last_error to say it is not implemented, got %q", emailLastError)
+}
+
+// TestChannelRouter_UnknownTypeIsReportedNotImplemented proves the router's
+// own defensive fallback still works for a channel type with no registered
+// dispatcher. There is no way to produce this through a real row today
+// (alert_channels' CHECK constraint only allows webhook/email/push, and all
+// three have a real dispatcher as of B-014) — this calls Dispatch directly
+// with a Channel the database could never hand back, the same "a mis-wired
+// router should produce an honest unconfirmed outcome" guarantee
+// ADR-0007 documents.
+func TestChannelRouter_UnknownTypeIsReportedNotImplemented(t *testing.T) {
+	router := NewChannelRouter(map[string]Dispatcher{
+		"webhook": fastDispatcher(),
+	})
+	outcome := router.Dispatch(t.Context(), Channel{ID: "unknown-channel", Type: "sms"}, DispatchRequest{IncidentID: 1, TargetID: "t", Kind: "opened"})
+	if outcome.Confirmed {
+		t.Fatal("expected an unconfirmed outcome for a type with no registered dispatcher")
+	}
+	if !strings.Contains(outcome.LastError, "not implemented") {
+		t.Fatalf("expected last_error to say the type is not implemented, got %q", outcome.LastError)
 	}
 }

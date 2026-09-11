@@ -17,6 +17,7 @@ import (
 
 	"github.com/arb-rajab/pulsewatch/backend/internal/agentapi"
 	"github.com/arb-rajab/pulsewatch/backend/internal/alerting"
+	"github.com/arb-rajab/pulsewatch/backend/internal/emailprovider"
 	"github.com/arb-rajab/pulsewatch/backend/internal/operatorapi"
 	"github.com/arb-rajab/pulsewatch/backend/internal/operatorauth"
 	"github.com/arb-rajab/pulsewatch/backend/internal/rollup"
@@ -104,8 +105,14 @@ func run() error {
 	// shared mutable dependency, so no coupling to the scheduler package is
 	// needed here. ADR-0007 made that one shared constructor rather than
 	// two hand-assembled dispatcher literals, precisely so adding a third
-	// channel type cannot leave one of these two paths behind.
-	dispatcher := alerting.NewDefaultDispatcher(pool, nil)
+	// (and now, B-014, a fourth) channel type cannot leave one of these two
+	// paths behind.
+	emailCfg, emailErr := emailprovider.ConfigFromEnv()
+	if emailErr != nil {
+		slog.Warn("SMTP relay not configured; agent-reported email alert dispatch will be skipped if any alert_channels row exists", "error", emailErr)
+		emailCfg = emailprovider.Config{}
+	}
+	dispatcher := alerting.NewDefaultDispatcher(pool, nil, emailCfg)
 	channelKey, keyErr := alerting.EncryptionKeyFromEnv()
 	if keyErr != nil {
 		slog.Warn("ALERT_CHANNEL_ENCRYPTION_KEY not configured; agent-reported alert dispatch will be skipped if any alert_channels row exists", "error", keyErr)
