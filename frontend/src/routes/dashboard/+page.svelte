@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
@@ -33,9 +34,12 @@
 <main>
 	<header>
 		<h1>pulsewatch</h1>
-		<form method="POST" action="?/logout">
-			<button type="submit">Log out</button>
-		</form>
+		<nav>
+			<a href={resolve('/dashboard/devices')}>Devices</a>
+			<form method="POST" action="?/logout">
+				<button type="submit">Log out</button>
+			</form>
+		</nav>
 	</header>
 
 	{#if data.loadError}
@@ -92,6 +96,11 @@
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
+	}
+	nav {
+		display: flex;
+		align-items: center;
+		gap: 1rem;
 	}
 	table {
 		border-collapse: collapse;

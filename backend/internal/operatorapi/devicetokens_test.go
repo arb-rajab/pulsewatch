@@ -192,9 +192,27 @@ func TestListAndUnregisterDeviceTokens(t *testing.T) {
 	}
 
 	// The row survives revocation (alert_dispatches history depends on it)
-	// and reports itself as revoked rather than vanishing.
+	// and reports itself as revoked rather than vanishing — B-017's dashboard
+	// needs revoked_at on the list response to show that a revoke actually
+	// took effect, not just that the row is still there.
 	after := doRequest(t, r, http.MethodGet, "/api/v1/device-tokens", cookie, nil)
 	if !strings.Contains(after.Body.String(), record.ID) {
 		t.Fatal("expected a revoked registration to remain visible to its operator")
+	}
+	var afterListed []alerting.DeviceTokenRecord
+	if err := json.Unmarshal(after.Body.Bytes(), &afterListed); err != nil {
+		t.Fatalf("decode post-revoke list response: %v", err)
+	}
+	var found *alerting.DeviceTokenRecord
+	for i := range afterListed {
+		if afterListed[i].ID == record.ID {
+			found = &afterListed[i]
+		}
+	}
+	if found == nil {
+		t.Fatalf("expected %s in the post-revoke list, got %+v", record.ID, afterListed)
+	}
+	if found.RevokedAt == nil {
+		t.Fatalf("expected revoked_at to be set on the list response after revocation, got %+v", found)
 	}
 }

@@ -56,6 +56,13 @@ var ErrInvalidDeviceToken = errors.New("invalid device token registration")
 // out — the same structural discipline alertChannelResponse applies to a
 // channel's destination, applied to the one other value in this schema that
 // can be used to reach an operator's device.
+//
+// RevokedAt was added by B-017 (the dashboard's device list): every write
+// path (RegisterDeviceToken, RevokeDeviceToken) already maintained the
+// column, but no read path returned it until this session — nothing had
+// consumed it, since the mobile app itself has no reason to display its own
+// revocation state back to itself. An operator revoking a device from the
+// dashboard needs to see that it took effect.
 type DeviceTokenRecord struct {
 	ID               string     `json:"id"`
 	Provider         string     `json:"provider"`
@@ -63,6 +70,7 @@ type DeviceTokenRecord struct {
 	CreatedAt        time.Time  `json:"created_at"`
 	LastRegisteredAt time.Time  `json:"last_registered_at"`
 	LastDeliveredAt  *time.Time `json:"last_delivered_at"`
+	RevokedAt        *time.Time `json:"revoked_at"`
 	DeadAt           *time.Time `json:"dead_at"`
 	DeadReason       *string    `json:"dead_reason"`
 }
@@ -106,12 +114,12 @@ ON CONFLICT (provider, token) DO UPDATE SET
     revoked_at         = NULL,
     dead_at            = NULL,
     dead_reason        = NULL
-RETURNING id::text, provider, platform, created_at, last_registered_at, last_delivered_at, dead_at, dead_reason`
+RETURNING id::text, provider, platform, created_at, last_registered_at, last_delivered_at, revoked_at, dead_at, dead_reason`
 
 	var rec DeviceTokenRecord
 	err := pool.QueryRow(ctx, stmt, operatorID, provider, platform, token).Scan(
 		&rec.ID, &rec.Provider, &rec.Platform, &rec.CreatedAt,
-		&rec.LastRegisteredAt, &rec.LastDeliveredAt, &rec.DeadAt, &rec.DeadReason,
+		&rec.LastRegisteredAt, &rec.LastDeliveredAt, &rec.RevokedAt, &rec.DeadAt, &rec.DeadReason,
 	)
 	if err != nil {
 		return DeviceTokenRecord{}, fmt.Errorf("upsert device_tokens row: %w", err)
@@ -149,7 +157,7 @@ RETURNING id`
 // reason dead_reason is a column rather than only a log line.
 func ListDeviceTokens(ctx context.Context, pool *pgxpool.Pool, operatorID string) ([]DeviceTokenRecord, error) {
 	const stmt = `
-SELECT id::text, provider, platform, created_at, last_registered_at, last_delivered_at, dead_at, dead_reason
+SELECT id::text, provider, platform, created_at, last_registered_at, last_delivered_at, revoked_at, dead_at, dead_reason
 FROM device_tokens
 WHERE operator_id = $1::uuid
 ORDER BY last_registered_at DESC`
@@ -164,7 +172,7 @@ ORDER BY last_registered_at DESC`
 	for rows.Next() {
 		var rec DeviceTokenRecord
 		if err := rows.Scan(&rec.ID, &rec.Provider, &rec.Platform, &rec.CreatedAt,
-			&rec.LastRegisteredAt, &rec.LastDeliveredAt, &rec.DeadAt, &rec.DeadReason); err != nil {
+			&rec.LastRegisteredAt, &rec.LastDeliveredAt, &rec.RevokedAt, &rec.DeadAt, &rec.DeadReason); err != nil {
 			return nil, fmt.Errorf("scan device_tokens row: %w", err)
 		}
 		records = append(records, rec)

@@ -878,6 +878,11 @@ components:
         created_at: { type: string, format: date-time }
         last_registered_at: { type: string, format: date-time }
         last_delivered_at: { type: string, format: date-time, nullable: true }
+        revoked_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: "Set when the operator unregistered this device (DELETE .../{id}). Cleared by re-registration, the same as dead_at."
         dead_at:
           type: string
           format: date-time

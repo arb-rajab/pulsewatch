@@ -43,6 +43,9 @@ func TestRegisterDeviceToken_UpsertResurrectsADeadToken(t *testing.T) {
 	if second.DeadAt != nil || second.DeadReason != nil {
 		t.Fatal("expected re-registration to clear dead_at/dead_reason")
 	}
+	if second.RevokedAt != nil {
+		t.Fatal("expected re-registration to clear revoked_at too")
+	}
 	if !second.LastRegisteredAt.After(first.LastRegisteredAt) && !second.LastRegisteredAt.Equal(first.LastRegisteredAt) {
 		t.Fatal("expected last_registered_at to advance on re-registration")
 	}
@@ -77,6 +80,26 @@ func TestRevokeDeviceToken_RemovesFromFanOutAndIsScopedToItsOperator(t *testing.
 	if err := RevokeDeviceToken(t.Context(), pool, owner, record.ID); err != nil {
 		t.Fatalf("RevokeDeviceToken: %v", err)
 	}
+
+	// ListDeviceTokens (the dashboard's read path, B-017) must actually
+	// surface that the revoke took effect, not just leave the row present.
+	listed, err := ListDeviceTokens(t.Context(), pool, owner)
+	if err != nil {
+		t.Fatalf("ListDeviceTokens: %v", err)
+	}
+	var revoked *DeviceTokenRecord
+	for i := range listed {
+		if listed[i].ID == record.ID {
+			revoked = &listed[i]
+		}
+	}
+	if revoked == nil {
+		t.Fatalf("expected %s in the listing, got %+v", record.ID, listed)
+	}
+	if revoked.RevokedAt == nil {
+		t.Fatal("expected RevokedAt to be set after RevokeDeviceToken")
+	}
+
 	live, err := loadLiveDeviceTokens(t.Context(), pool, "apns")
 	if err != nil {
 		t.Fatalf("loadLiveDeviceTokens: %v", err)
