@@ -296,13 +296,13 @@ func TestClient_SendDeliversOverPlaintext(t *testing.T) {
 	}
 }
 
-// TestClient_SendSanitizesSubjectHeaderInjection proves a Subject
-// containing an embedded CRLF cannot inject a forged header or terminate
-// the header block early — the classic email header-injection
-// vulnerability class Client.Send's exported Message.Subject would
-// otherwise be a real sink for. The injected "Bcc" line must never appear
-// as its own header line in the message this package actually sends.
-func TestClient_SendSanitizesSubjectHeaderInjection(t *testing.T) {
+// TestClient_SendRejectsSubjectHeaderInjection proves a Subject containing
+// an embedded CRLF is rejected outright — before any network I/O — rather
+// than silently mangled into the message: the classic email
+// header-injection vulnerability class Client.Send's exported
+// Message.Subject would otherwise be a real sink for. No connection to the
+// server should even be attempted.
+func TestClient_SendRejectsSubjectHeaderInjection(t *testing.T) {
 	srv := newFakeSMTPServer(t)
 	srv.start()
 	client, err := NewClient(baseConfig(srv))
@@ -314,18 +314,33 @@ func TestClient_SendSanitizesSubjectHeaderInjection(t *testing.T) {
 		Subject: "hi\r\nBcc: attacker@evil.invalid\r\nX-Injected: yes",
 		Body:    "body",
 	}
-	if err := client.Send(t.Context(), "ops@example.invalid", malicious); err != nil {
-		t.Fatalf("Send: %v", err)
+	err = client.Send(t.Context(), "ops@example.invalid", malicious)
+	if err == nil {
+		t.Fatal("expected Send to reject a Subject containing CR/LF")
 	}
+	if KindOf(err) != KindPermanent {
+		t.Fatalf("expected KindPermanent for a malformed subject, got %q (%v)", KindOf(err), err)
+	}
+	if srv.sentBody() != "" {
+		t.Fatalf("expected no message to have been sent at all, got:\n%s", srv.sentBody())
+	}
+}
 
-	body := srv.sentBody()
-	for _, line := range strings.Split(body, "\r\n") {
-		if strings.HasPrefix(line, "Bcc:") || strings.HasPrefix(line, "X-Injected:") {
-			t.Fatalf("header injection succeeded: found injected header line %q in:\n%s", line, body)
+// TestBuildMessage_SanitizesHeaderValues proves buildMessage's own second,
+// redundant layer of CR/LF stripping (belt and braces alongside Send's
+// reject, see sanitizeHeaderValue's doc comment) actually works, exercised
+// directly since Send's own guard makes this path unreachable through the
+// public API for Subject specifically.
+func TestBuildMessage_SanitizesHeaderValues(t *testing.T) {
+	msg := Message{Subject: "hi\r\nBcc: attacker@evil.invalid", Body: "body"}
+	rendered := string(buildMessage("from@example.invalid", "to@example.invalid", msg, time.Now()))
+	for _, line := range strings.Split(rendered, "\r\n") {
+		if strings.HasPrefix(line, "Bcc:") {
+			t.Fatalf("header injection succeeded: found injected header line %q in:\n%s", line, rendered)
 		}
 	}
-	if !strings.Contains(body, "Subject: hiBcc: attacker@evil.invalidX-Injected: yes") {
-		t.Fatalf("expected the CR/LF-stripped subject on one line, got:\n%s", body)
+	if !strings.Contains(rendered, "Subject: hiBcc: attacker@evil.invalid\r\n") {
+		t.Fatalf("expected the CR/LF-stripped subject on one line, got:\n%s", rendered)
 	}
 }
 

@@ -61,6 +61,19 @@ const (
 // connection-level deadline is the real mechanism available, the same
 // approach a context-bounded database/sql driver uses under the hood.
 func (c *Client) Send(ctx context.Context, to string, msg Message) error {
+	// Message and Client.Send are this package's exported API, so
+	// msg.Subject is caller-supplied per send, unlike c.cfg.From (fixed
+	// relay configuration) or to (already validated by smtp.Client.Rcpt
+	// before it ever reaches buildMessage, below). Rejecting an embedded
+	// CR/LF here — the same reject-don't-silently-mangle shape
+	// net/smtp.Client's own validateLine already uses for to/from — is
+	// what stops a Subject from being able to inject an arbitrary
+	// additional header (a forged Bcc) or terminate the header block
+	// early: the classic email header-injection vulnerability class.
+	if strings.ContainsAny(msg.Subject, "\r\n") {
+		return newSendError(KindPermanent, "message subject must not contain CR or LF")
+	}
+
 	deadline, ok := ctx.Deadline()
 	if !ok {
 		deadline = time.Now().Add(30 * time.Second)
@@ -140,13 +153,15 @@ func (c *Client) tlsConfig() *tls.Config {
 	return &tls.Config{ServerName: c.cfg.Host, RootCAs: c.cfg.RootCAs}
 }
 
-// sanitizeHeaderValue strips CR and LF from a value before it is written
-// into an RFC 5322 header field, so an embedded CRLF in caller-supplied
-// input (Message.Subject, primarily) cannot inject an additional header
-// line or terminate the header block early. It is deliberately a strip,
-// not a reject-and-error: a rendered subject line is not this package's
-// job to validate at the caller's expense, only to make impossible to turn
-// into a different email than the one it renders as.
+// sanitizeHeaderValue strips any CR/LF a value still carries before it is
+// written into an RFC 5322 header field. Send already rejects a Subject
+// containing one outright (the primary guard, applied before any network
+// I/O happens); to has separately already passed smtp.Client.Rcpt's own
+// line-injection check by the time this runs; from is fixed relay
+// configuration, not per-message input. This is the second, redundant
+// layer for the same header-injection vulnerability class — belt and
+// braces at the one place every header value is actually written, not a
+// substitute for Send's own reject.
 func sanitizeHeaderValue(v string) string {
 	v = strings.ReplaceAll(v, "\r", "")
 	v = strings.ReplaceAll(v, "\n", "")
@@ -155,18 +170,9 @@ func sanitizeHeaderValue(v string) string {
 
 // buildMessage renders msg as a minimal, valid RFC 5322 message: headers,
 // a blank line, then the body, entirely CRLF-terminated (RFC 5321's DATA
-// command requires it).
-//
-// Every header value is passed through sanitizeHeaderValue first. to has
-// already passed smtp.Client.Rcpt's own line-injection check (Send calls
-// Rcpt before this) and from is operator configuration, not per-message
-// input, but msg.Subject is caller-supplied per send — Client.Send and
-// Message are this package's exported API, and a Subject containing an
-// embedded CR/LF could otherwise inject arbitrary additional headers (a
-// forged Bcc, a spoofed From) or terminate the header block early: the
-// classic email header-injection vulnerability class. Sanitizing every
-// header value uniformly here, at the one place that actually writes them,
-// is the defense — not trusting each call site to have done it.
+// command requires it). Every header value still passes through
+// sanitizeHeaderValue — see its own doc comment for why that is a second
+// layer, not the only one.
 func buildMessage(from, to string, msg Message, sentAt time.Time) []byte {
 	var b strings.Builder
 	b.WriteString("From: " + sanitizeHeaderValue(from) + "\r\n")
