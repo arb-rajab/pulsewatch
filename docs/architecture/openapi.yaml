@@ -26,6 +26,8 @@ tags:
     description: Live target state and rolling-window SLO — US-004, US-009, ADR-0002, ADR-0003.
   - name: alert-channels
     description: Alert-channel configuration with write-once credential handling — FR-023.
+  - name: device-tokens
+    description: Mobile push device registration — ADR-0007. Same operatorSession identity as every other operator route; the mobile app is a second client, not a third principal.
   - name: agents
     description: Agent registration and credential lifecycle — ADR-0003, roles matrix.
   - name: agent-surface
@@ -359,6 +361,74 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '422': { $ref: '#/components/responses/ValidationError' }
 
+  /device-tokens:
+    post:
+      operationId: registerDeviceToken
+      tags: [device-tokens]
+      summary: Register (or re-register) this device for push notifications (ADR-0007)
+      description: >
+        Upserts on `(provider, token)`, which is why it answers `200` and
+        not `201`: a mobile app re-registers an unchanged token on every
+        launch, and that is not a creation. Re-registration also clears
+        `dead_at`/`dead_reason` — a device that has just told us it holds
+        this token is, by direct evidence, live again, which is what makes
+        ADR-0007's dead-token marking safe rather than a permanent mute.
+        The token value is accepted here and is not readable back through
+        any operation: `DeviceToken` has no property capable of carrying it.
+      security: [{ operatorSession: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DeviceTokenRegisterRequest' }
+      responses:
+        '200':
+          description: Registered or re-registered.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeviceToken' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+    get:
+      operationId: listDeviceTokens
+      tags: [device-tokens]
+      summary: List this operator's registered devices
+      description: >
+        Includes revoked and dead registrations, with the reason a dead one
+        died — an operator asking "why didn't my phone buzz" needs exactly
+        that, which is why `dead_reason` is a column and not only a log line.
+      security: [{ operatorSession: [] }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/DeviceToken' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /device-tokens/{device_token_id}:
+    parameters:
+      - $ref: '#/components/parameters/DeviceTokenId'
+    delete:
+      operationId: unregisterDeviceToken
+      tags: [device-tokens]
+      summary: Unregister a device (sign-out)
+      description: >
+        Revokes rather than deletes: `alert_dispatches`' record of which
+        incidents were notified depends on the row surviving. The
+        registration leaves the push fan-out set immediately. `404` is
+        returned identically for "no such id", "not this operator's", and
+        "already revoked" — a caller holding a session has no legitimate
+        use for telling those apart, and the first two would otherwise be
+        an id-enumeration oracle.
+      security: [{ operatorSession: [] }]
+      responses:
+        '204': { description: Unregistered. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /agents:
     post:
       operationId: createAgent
@@ -599,6 +669,11 @@ components:
       in: path
       required: true
       schema: { type: string, format: uuid }
+    DeviceTokenId:
+      name: device_token_id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
     AgentId:
       name: agent_id
       in: path
@@ -773,8 +848,45 @@ components:
       description: "Deliberately has no destination/credential property at all — see /alert-channels POST description."
       properties:
         id: { type: string, format: uuid }
-        type: { type: string, enum: [webhook, email] }
+        type: { type: string, enum: [webhook, email, push] }
         created_at: { type: string, format: date-time }
+
+    DeviceTokenRegisterRequest:
+      type: object
+      required: [provider, platform, token]
+      properties:
+        provider:
+          type: string
+          enum: [fcm, apns]
+          description: "Which provider issued this token. Dispatch matches a push channel's credential to tokens by provider — an APNs credential is never handed an FCM token."
+        platform:
+          type: string
+          enum: [ios, android]
+          description: "Recorded for operator visibility only; provider is what routes a send, since FCM itself can deliver to iOS."
+        token:
+          type: string
+          maxLength: 4096
+          description: "The provider-issued device token. Write-only — no operation returns it."
+
+    DeviceToken:
+      type: object
+      description: "Deliberately has no `token` property at all — the registration response is the one place it could plausibly be echoed back, and it is not."
+      properties:
+        id: { type: string, format: uuid }
+        provider: { type: string, enum: [fcm, apns] }
+        platform: { type: string, enum: [ios, android] }
+        created_at: { type: string, format: date-time }
+        last_registered_at: { type: string, format: date-time }
+        last_delivered_at: { type: string, format: date-time, nullable: true }
+        dead_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: "Set when a provider permanently rejected this token (ADR-0007). Cleared by re-registration."
+        dead_reason:
+          type: string
+          nullable: true
+          description: "ADR-0007's fixed vocabulary plus a provider error code, e.g. \"fcm rejected device token: UNREGISTERED\". Never contains the token itself."
 
     AlertChannelSecretRotateRequest:
       type: object

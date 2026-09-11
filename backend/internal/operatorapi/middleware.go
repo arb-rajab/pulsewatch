@@ -17,16 +17,19 @@ import (
 // disjoint identity types" — there is no lesser-privilege outcome to fall
 // back to.
 //
-// Unlike agentapi's RequireAgent, the verified Identity is not stashed in
-// the request context for handlers to read back: 02-requirements.md's
-// single-operator baseline means every operator-facing resource (targets,
-// alert channels, agents) is global, not scoped per-operator-account, so
-// there is no handler in this package that has any use for *which*
-// operator is calling — only *that* the caller is a genuinely authenticated
-// one. Verifying and discarding the identity here, rather than threading an
-// unused value through every handler, is the same "don't build for a
-// distinction the data model doesn't have" discipline this repo already
-// applies to the roles matrix itself (no ABAC, no third role).
+// Through Session 17 this middleware verified the session and deliberately
+// discarded the resulting Identity, because every operator-facing resource
+// (targets, alert channels, agents) was global rather than scoped to an
+// operator account, so no handler had any use for *which* operator was
+// calling — only *that* the caller was a genuinely authenticated one.
+//
+// ADR-0007 introduced the first resource that genuinely is per-account:
+// device_tokens.operator_id, the phone a specific operator registered.
+// Discarding the identity and then re-deriving it (by, say, assuming the
+// single operator row) would be exactly the kind of unexamined shortcut
+// this repo avoids — so the verified Identity is now stashed under
+// operatorIDContextKey, and OperatorIDFrom is the one way a handler reads
+// it back. Handlers that don't need it still don't take it, unchanged.
 func RequireOperator(secret []byte) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		cookie, err := c.Cookie(operatorauth.SessionCookieName)
@@ -35,13 +38,37 @@ func RequireOperator(secret []byte) gin.HandlerFunc {
 			c.Abort()
 			return
 		}
-		if _, err := operatorauth.VerifySession(secret, cookie, time.Now()); err != nil {
+		identity, err := operatorauth.VerifySession(secret, cookie, time.Now())
+		if err != nil {
 			writeError(c, http.StatusUnauthorized, "unauthorized", "missing or invalid operator session")
 			c.Abort()
 			return
 		}
+		c.Set(operatorIDContextKey, identity.OperatorID)
 		c.Next()
 	}
+}
+
+// operatorIDContextKey is this package's own gin context key for the
+// verified operator id. Unexported: a handler reads it through
+// OperatorIDFrom, never by string, so the key can never be typo'd into a
+// silent empty-string identity.
+const operatorIDContextKey = "pulsewatch_operator_id"
+
+// OperatorIDFrom returns the operator id RequireOperator verified for this
+// request. The boolean is false only if it is called from a route that is
+// not behind RequireOperator — a wiring bug, which handlers turn into a 401
+// rather than proceeding with an empty identity.
+func OperatorIDFrom(c *gin.Context) (string, bool) {
+	value, exists := c.Get(operatorIDContextKey)
+	if !exists {
+		return "", false
+	}
+	operatorID, ok := value.(string)
+	if !ok || operatorID == "" {
+		return "", false
+	}
+	return operatorID, true
 }
 
 // RequireJSONContentType is this repo's CSRF mitigation for the operator

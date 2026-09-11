@@ -1,10 +1,12 @@
 package operatorapi
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestAlertChannels_FullLifecycle_ThroughRealGatedHTTP(t *testing.T) {
@@ -91,5 +93,48 @@ func TestCreateAlertChannel_RejectsInvalidType(t *testing.T) {
 	w := doRequest(t, r, http.MethodPost, "/api/v1/alert-channels", cookie, []byte(`{"type":"carrier-pigeon","destination":"x"}`))
 	if w.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("expected 422, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestCreateAlertChannel_AcceptsAPushChannel proves ADR-0007's channel type
+// is genuinely creatable through the same operator API — and that a push
+// credential is treated exactly like any other channel secret on the way
+// out: the created channel is readable, and nothing in either response can
+// carry the credential back.
+func TestCreateAlertChannel_AcceptsAPushChannel(t *testing.T) {
+	pool := testPool(t)
+	operatorID := insertTestOperator(t, pool, "test-channels-push@example.invalid", "a-real-password")
+	cookie := realSessionCookie(t, operatorID)
+	r := testRouter(pool)
+
+	const credential = `{"provider":"fcm","project_id":"p","client_email":"e@x.iam.gserviceaccount.com","private_key":"-----BEGIN PRIVATE KEY-----\nnot-a-real-key\n-----END PRIVATE KEY-----\n"}`
+	body := mustJSON(t, map[string]string{"type": "push", "destination": credential})
+
+	w := doRequest(t, r, http.MethodPost, "/api/v1/alert-channels", cookie, body)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201 for a push channel, got %d: %s", w.Code, w.Body.String())
+	}
+	var created alertChannelResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+	if created.Type != "push" {
+		t.Fatalf("expected type=push, got %q", created.Type)
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_, _ = pool.Exec(ctx, `DELETE FROM alert_channels WHERE id = $1::uuid`, created.ID)
+	})
+
+	if strings.Contains(w.Body.String(), "PRIVATE KEY") {
+		t.Fatalf("the push credential must never be echoed back, got %s", w.Body.String())
+	}
+	read := doRequest(t, r, http.MethodGet, "/api/v1/alert-channels/"+created.ID, cookie, nil)
+	if read.Code != http.StatusOK {
+		t.Fatalf("expected 200 reading the push channel back, got %d", read.Code)
+	}
+	if strings.Contains(read.Body.String(), "PRIVATE KEY") {
+		t.Fatalf("the push credential must never be readable, got %s", read.Body.String())
 	}
 }

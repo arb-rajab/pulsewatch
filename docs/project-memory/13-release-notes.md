@@ -1,10 +1,40 @@
 # Release Notes
 > Purpose: what changed, for humans
 > Project: pulsewatch (public)
-> Last updated: 2026-09-06
+> Last updated: 2026-09-07
 
 ## Unreleased
 ### Added
+- Mobile push as a third alert channel (B-018, ADR-0007): opening or
+  resolving an incident now sends a real push notification, through
+  Firebase Cloud Messaging's HTTP v1 API or Apple's APNs HTTP/2 API, to
+  every device an operator has registered. A `"push"` alert channel's
+  destination is the provider credential (a Firebase service-account JSON
+  or an APNs `.p8` token-auth object), encrypted at rest exactly as a
+  webhook URL is; the delivery addresses are device tokens registered
+  through the new `POST`/`GET`/`DELETE /api/v1/device-tokens` endpoints
+  (migration `000011`). Both providers are spoken directly over `net/http`
+  with no vendor SDK and no new module dependency.
+
+  Push failures are not treated like webhook failures, deliberately: a
+  provider saying a token is unregistered or invalid is permanent, so it is
+  never retried and the token is recorded dead (`device_tokens.dead_at`/
+  `dead_reason`) and skipped by every later incident — while a genuine
+  provider outage still retries on the existing backoff and never kills a
+  working device, and a rejected *credential* aborts the fan-out rather
+  than repeating one configuration mistake once per phone. Re-registering
+  a token clears its dead-marking, so a device recovers on its next app
+  launch. One `alert_dispatches` row still records the whole fan-out:
+  confirmed when at least one device was reached, with the shortfall
+  spelled out in `last_error` rather than hidden.
+
+  **Named limitation:** no notification was delivered to a real device by
+  real FCM or real APNs infrastructure this session — that needs
+  credentials no public repo or CI job can hold. Both protocols are
+  implemented against the providers' real published APIs and verified
+  against mock servers speaking them (real OAuth 2 JWT-bearer exchange,
+  cryptographically verified signatures, real HTTP/2 for APNs), never
+  faked into success. Tracked as B-016.
 - Real webhook alert delivery (B-015, ADR-0006): opening or resolving an
   incident now sends an actual `HTTP POST` to every configured `"webhook"`
   alert channel, retried up to 3 times with exponential backoff (200ms→2s

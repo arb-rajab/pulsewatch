@@ -41,6 +41,14 @@ func RegisterRoutes(r *gin.Engine, pool *pgxpool.Pool, sessionSecret []byte, cha
 	api.PUT("/alert-channels/:alert_channel_id/secret", auth, csrf, RotateAlertChannelSecret(pool, channelKey))
 	api.DELETE("/alert-channels/:alert_channel_id", auth, DeleteAlertChannel(pool))
 
+	// ADR-0007: mobile push. Registration is the mobile app's own call
+	// (pulsewatch-mobile), authenticated with the same operator session the
+	// dashboard uses — there is no second identity type here, per
+	// 05-api-contracts.md's "only ever two disjoint identity types".
+	api.POST("/device-tokens", auth, csrf, RegisterDeviceToken(pool))
+	api.GET("/device-tokens", auth, ListDeviceTokens(pool))
+	api.DELETE("/device-tokens/:device_token_id", auth, UnregisterDeviceToken(pool))
+
 	api.POST("/agents", auth, csrf, CreateAgent(pool))
 	api.GET("/agents", auth, ListAgents(pool))
 	api.GET("/agents/:agent_id", auth, GetAgent(pool))
