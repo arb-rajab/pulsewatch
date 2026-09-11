@@ -326,6 +326,32 @@ func TestClient_SendRejectsSubjectHeaderInjection(t *testing.T) {
 	}
 }
 
+// TestClient_SendRejectsRecipientHeaderInjection is
+// TestClient_SendRejectsSubjectHeaderInjection's sibling for to: a
+// recipient address is also caller-supplied per send (Client.Send's own
+// exported parameter), so it gets the identical reject-before-any-I/O
+// guard, even though in production it will already have been rejected
+// again by smtp.Client.Rcpt's own validateLine a few lines later.
+func TestClient_SendRejectsRecipientHeaderInjection(t *testing.T) {
+	srv := newFakeSMTPServer(t)
+	srv.start()
+	client, err := NewClient(baseConfig(srv))
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	err = client.Send(t.Context(), "ops@example.invalid\r\nBcc: attacker@evil.invalid", testMessage())
+	if err == nil {
+		t.Fatal("expected Send to reject a recipient address containing CR/LF")
+	}
+	if KindOf(err) != KindPermanent {
+		t.Fatalf("expected KindPermanent for a malformed recipient, got %q (%v)", KindOf(err), err)
+	}
+	if srv.sentBody() != "" {
+		t.Fatalf("expected no message to have been sent at all, got:\n%s", srv.sentBody())
+	}
+}
+
 // TestBuildMessage_SanitizesHeaderValues proves buildMessage's own second,
 // redundant layer of CR/LF stripping (belt and braces alongside Send's
 // reject, see sanitizeHeaderValue's doc comment) actually works, exercised

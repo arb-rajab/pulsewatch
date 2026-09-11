@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"mime"
 	"net"
 	"net/smtp"
 	"net/textproto"
@@ -61,15 +62,22 @@ const (
 // connection-level deadline is the real mechanism available, the same
 // approach a context-bounded database/sql driver uses under the hood.
 func (c *Client) Send(ctx context.Context, to string, msg Message) error {
-	// Message and Client.Send are this package's exported API, so
-	// msg.Subject is caller-supplied per send, unlike c.cfg.From (fixed
-	// relay configuration) or to (already validated by smtp.Client.Rcpt
-	// before it ever reaches buildMessage, below). Rejecting an embedded
-	// CR/LF here — the same reject-don't-silently-mangle shape
-	// net/smtp.Client's own validateLine already uses for to/from — is
-	// what stops a Subject from being able to inject an arbitrary
-	// additional header (a forged Bcc) or terminate the header block
-	// early: the classic email header-injection vulnerability class.
+	// Message and Client.Send are this package's exported API: to and
+	// msg.Subject are both caller-supplied per send (unlike c.cfg.From,
+	// fixed relay configuration), and both end up in an RFC 5322 header
+	// line (buildMessage, below). Rejecting an embedded CR/LF in either
+	// here, before any network I/O happens — the same reject-don't-
+	// silently-mangle shape net/smtp.Client's own validateLine already
+	// uses internally for these same two values — is what stops either
+	// from injecting an arbitrary additional header (a forged Bcc) or
+	// terminating the header block early: the classic email
+	// header-injection vulnerability class. Subject is additionally
+	// MIME-encoded (RFC 2047) in buildMessage, which is structurally
+	// incapable of producing a raw CR/LF in its output regardless of
+	// input — belt and braces on top of this reject.
+	if strings.ContainsAny(to, "\r\n") {
+		return newSendError(KindPermanent, "recipient address must not contain CR or LF")
+	}
 	if strings.ContainsAny(msg.Subject, "\r\n") {
 		return newSendError(KindPermanent, "message subject must not contain CR or LF")
 	}
@@ -170,14 +178,21 @@ func sanitizeHeaderValue(v string) string {
 
 // buildMessage renders msg as a minimal, valid RFC 5322 message: headers,
 // a blank line, then the body, entirely CRLF-terminated (RFC 5321's DATA
-// command requires it). Every header value still passes through
+// command requires it). Every plain header value still passes through
 // sanitizeHeaderValue — see its own doc comment for why that is a second
-// layer, not the only one.
+// layer, not the only one. Subject additionally goes through RFC 2047
+// MIME encoding (mime.QEncoding.Encode): a real, structural guarantee
+// against header injection, not just a heuristic one — the encoded-word
+// form Q/B-encodes every byte outside a narrow printable-ASCII allowlist,
+// so a raw CR or LF cannot survive into the rendered header line
+// regardless of what Subject contained (and, as a real bonus, it is also
+// what correctly represents a non-ASCII subject at all, which naive
+// concatenation never did).
 func buildMessage(from, to string, msg Message, sentAt time.Time) []byte {
 	var b strings.Builder
 	b.WriteString("From: " + sanitizeHeaderValue(from) + "\r\n")
 	b.WriteString("To: " + sanitizeHeaderValue(to) + "\r\n")
-	b.WriteString("Subject: " + sanitizeHeaderValue(msg.Subject) + "\r\n")
+	b.WriteString("Subject: " + mime.QEncoding.Encode("utf-8", sanitizeHeaderValue(msg.Subject)) + "\r\n")
 	b.WriteString("Date: " + sentAt.Format(time.RFC1123Z) + "\r\n")
 	b.WriteString("MIME-Version: 1.0\r\n")
 	b.WriteString("Content-Type: text/plain; charset=\"utf-8\"\r\n")
