@@ -2,6 +2,7 @@ package agentapi
 
 import (
 	"encoding/json"
+	"math"
 	"net/http"
 	"strconv"
 	"testing"
@@ -48,6 +49,15 @@ func checkResultRecord(at time.Time, targetID string, success bool, latencyMS in
 			KV(AttrLatencyMS, IntValue(latencyMS)),
 		},
 	}
+}
+
+// checkResultRecordWithStatus is checkResultRecord plus an explicit
+// pulsewatch.status_code attribute, for exercising that conversion's
+// boundaries independently of latency_ms.
+func checkResultRecordWithStatus(at time.Time, targetID string, success bool, latencyMS, statusCode int64) OtlpLogRecord {
+	rec := checkResultRecord(at, targetID, success, latencyMS)
+	rec.Attributes = append(rec.Attributes, KV(AttrStatusCode, IntValue(statusCode)))
+	return rec
 }
 
 func TestIngestLogs_RequiresValidBearerToken(t *testing.T) {
@@ -291,5 +301,124 @@ func TestStalenessVsTargetDown_BothHalvesDistinguished(t *testing.T) {
 	_, rawStateAfter := fetchStreakState(t, pool, targetID)
 	if rawStateAfter != string(alerting.StateAlerting) {
 		t.Fatalf("expected raw_state to remain alerting regardless of display-time staleness, got %s", rawStateAfter)
+	}
+}
+
+// TestIngestLogs_LatencyMSBoundaries proves the fix for CodeQL's
+// go/incorrect-integer-conversion finding on the latencyMS narrowing
+// conversion (int64 -> int) in processCheckResult (logs.go): a value
+// outside [0, math.MaxInt32] is rejected as invalid before any conversion
+// happens, rather than silently truncated or handed to Postgres's
+// `integer` (int4) column, and every value inside that range round-trips
+// exactly.
+func TestIngestLogs_LatencyMSBoundaries(t *testing.T) {
+	pool := testPool(t)
+	agentID, token := insertTestAgent(t, pool, "test-logs-latency-boundary", 60)
+	r := testRouter(pool, &spyDispatcher{}, nil)
+
+	cases := []struct {
+		name      string
+		latencyMS int64
+		accepted  bool
+	}{
+		{"zero", 0, true},
+		{"typical", 42, true},
+		{"max_int32", math.MaxInt32, true},
+		{"negative", -1, false},
+		{"one_past_max_int32", math.MaxInt32 + 1, false},
+		{"max_int64", math.MaxInt64, false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			targetID := insertAssignedTarget(t, pool, agentID, defaultTestTargetOpts())
+			body := buildOtlpRequest(agentID, checkResultRecord(time.Now(), targetID, true, tc.latencyMS))
+
+			w := doRequest(t, r, http.MethodPost, "/v1/logs", token, body)
+			if w.Code != http.StatusOK {
+				t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+			}
+
+			var resp exportLogsServiceResponse
+			if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+				t.Fatalf("decode response: %v", err)
+			}
+
+			gotAccepted := resp.PartialSuccess == nil
+			if gotAccepted != tc.accepted {
+				t.Fatalf("latencyMS=%d: expected accepted=%v, got accepted=%v (partialSuccess=%+v)", tc.latencyMS, tc.accepted, gotAccepted, resp.PartialSuccess)
+			}
+
+			wantCount := 0
+			if tc.accepted {
+				wantCount = 1
+			}
+			if count := countCheckResultsFor(t, pool, targetID); count != wantCount {
+				t.Fatalf("latencyMS=%d: expected %d persisted check_results rows, got %d", tc.latencyMS, wantCount, count)
+			}
+		})
+	}
+}
+
+// TestIngestLogs_StatusCodeBoundaries proves the fix for CodeQL's second
+// go/incorrect-integer-conversion finding on the statusCode narrowing
+// conversion (int64 -> int32) in processCheckResult (logs.go). Unlike the
+// identical-looking int32(resp.StatusCode) casts in
+// internal/scheduler/check.go and cmd/agent/checker.go — where the source
+// is Go's own net/http response and therefore already bounded — this
+// value starts as an arbitrary agent-supplied decimal string, so it must
+// be range-checked before conversion. An in-range value round-trips to
+// Postgres exactly; an out-of-range one is rejected outright rather than
+// silently wrapping to an unrelated status code.
+func TestIngestLogs_StatusCodeBoundaries(t *testing.T) {
+	pool := testPool(t)
+	agentID, token := insertTestAgent(t, pool, "test-logs-status-boundary", 60)
+	r := testRouter(pool, &spyDispatcher{}, nil)
+
+	cases := []struct {
+		name       string
+		statusCode int64
+		accepted   bool
+	}{
+		{"typical_2xx", 200, true},
+		{"zero", 0, true},
+		{"max_int32", math.MaxInt32, true},
+		{"negative", -1, false},
+		{"one_past_max_int32", math.MaxInt32 + 1, false},
+		{"max_int64", math.MaxInt64, false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			targetID := insertAssignedTarget(t, pool, agentID, defaultTestTargetOpts())
+			body := buildOtlpRequest(agentID, checkResultRecordWithStatus(time.Now(), targetID, true, 42, tc.statusCode))
+
+			w := doRequest(t, r, http.MethodPost, "/v1/logs", token, body)
+			if w.Code != http.StatusOK {
+				t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+			}
+
+			var resp exportLogsServiceResponse
+			if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+				t.Fatalf("decode response: %v", err)
+			}
+
+			gotAccepted := resp.PartialSuccess == nil
+			if gotAccepted != tc.accepted {
+				t.Fatalf("statusCode=%d: expected accepted=%v, got accepted=%v (partialSuccess=%+v)", tc.statusCode, tc.accepted, gotAccepted, resp.PartialSuccess)
+			}
+
+			if !tc.accepted {
+				if count := countCheckResultsFor(t, pool, targetID); count != 0 {
+					t.Fatalf("statusCode=%d: expected 0 persisted rows for a rejected record, got %d", tc.statusCode, count)
+				}
+				return
+			}
+
+			got := fetchLatestStatusCode(t, pool, targetID)
+			if got == nil || int64(*got) != tc.statusCode {
+				t.Fatalf("statusCode=%d: expected it to round-trip exactly, got %v", tc.statusCode, got)
+			}
+		})
 	}
 }

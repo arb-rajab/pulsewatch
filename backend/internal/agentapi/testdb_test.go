@@ -148,6 +148,24 @@ func countCheckResultsFor(t *testing.T, pool *pgxpool.Pool, targetID string) int
 	return count
 }
 
+// fetchLatestStatusCode reads back the status_code this test's own
+// check_results row was actually persisted with, proving the
+// int64->int32 conversion in processCheckResult (logs.go) round-trips the
+// exact value an in-range submission carried, rather than a silently
+// wrapped one.
+func fetchLatestStatusCode(t *testing.T, pool *pgxpool.Pool, targetID string) *int32 {
+	t.Helper()
+	var code *int32
+	err := pool.QueryRow(t.Context(),
+		`SELECT status_code FROM check_results WHERE target_id = $1::uuid ORDER BY checked_at DESC LIMIT 1`,
+		targetID,
+	).Scan(&code)
+	if err != nil {
+		t.Fatalf("fetch status_code: %v", err)
+	}
+	return code
+}
+
 // testEncryptionKey mirrors alerting's and scheduler's own testEncryptionKey
 // exactly (a fixed, non-secret 32-byte key) — alert_channels is a global
 // table shared by every package's test suite against the same Postgres, so
