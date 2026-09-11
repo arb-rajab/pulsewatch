@@ -70,6 +70,15 @@ services:
       # gracefully (logs a warning, skips dispatch) rather than failing to
       # start when it's unset.
       ALERT_CHANNEL_ENCRYPTION_KEY: ${ALERT_CHANNEL_ENCRYPTION_KEY:-}
+      # B-014: the outgoing SMTP relay account real "email" alert_channels
+      # rows dispatch through. Empty by default, same graceful-degradation
+      # story as ALERT_CHANNEL_ENCRYPTION_KEY above — see .env.example.
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM_ADDRESS: ${SMTP_FROM_ADDRESS:-}
+      SMTP_IMPLICIT_TLS: ${SMTP_IMPLICIT_TLS:-false}
       # Session 8: real operator-session auth. Stateless HMAC signing key for
       # the pulsewatch_session cookie (05-api-contracts.md) — base64,
       # decoding to at least 32 bytes. Required, no default: unlike

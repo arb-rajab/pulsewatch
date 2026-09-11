@@ -138,3 +138,48 @@ func TestCreateAlertChannel_AcceptsAPushChannel(t *testing.T) {
 		t.Fatalf("the push credential must never be readable, got %s", read.Body.String())
 	}
 }
+
+// TestCreateAlertChannel_AcceptsAnEmailChannel proves B-014's registration
+// side was already real before this session touched anything: "email" has
+// been a valid alert_channels.type since migration 000008 (Session 6), and
+// CreateAlertChannel has never special-cased it — an email channel's
+// destination is a plain recipient address, encrypted at rest exactly like
+// a webhook URL, with no schema or endpoint change needed for
+// alerting.EmailDispatcher (emaildispatch.go) to have a real row to read.
+func TestCreateAlertChannel_AcceptsAnEmailChannel(t *testing.T) {
+	pool := testPool(t)
+	operatorID := insertTestOperator(t, pool, "test-channels-email@example.invalid", "a-real-password")
+	cookie := realSessionCookie(t, operatorID)
+	r := testRouter(pool)
+
+	const recipient = "oncall+real-secret-address@example.invalid"
+	body := mustJSON(t, map[string]string{"type": "email", "destination": recipient})
+
+	w := doRequest(t, r, http.MethodPost, "/api/v1/alert-channels", cookie, body)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201 for an email channel, got %d: %s", w.Code, w.Body.String())
+	}
+	var created alertChannelResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+	if created.Type != "email" {
+		t.Fatalf("expected type=email, got %q", created.Type)
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_, _ = pool.Exec(ctx, `DELETE FROM alert_channels WHERE id = $1::uuid`, created.ID)
+	})
+
+	if strings.Contains(w.Body.String(), recipient) {
+		t.Fatalf("the recipient address must never be echoed back, got %s", w.Body.String())
+	}
+	read := doRequest(t, r, http.MethodGet, "/api/v1/alert-channels/"+created.ID, cookie, nil)
+	if read.Code != http.StatusOK {
+		t.Fatalf("expected 200 reading the email channel back, got %d", read.Code)
+	}
+	if strings.Contains(read.Body.String(), recipient) {
+		t.Fatalf("the recipient address must never be readable, got %s", read.Body.String())
+	}
+}

@@ -6,6 +6,8 @@ import (
 	"net/http"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/arb-rajab/pulsewatch/backend/internal/emailprovider"
 )
 
 // ChannelRouter is ADR-0007's answer to "there is now more than one real
@@ -22,11 +24,13 @@ import (
 // produce an honest unconfirmed outcome, not a webhook POST to a push
 // credential.
 //
-// A channel type with no registered dispatcher (today: "email", FR-014,
-// still deliberately unbuilt — see B-014) is reported back exactly as
-// ADR-0006 already reported it: unconfirmed, with a "not implemented"
-// last_error recorded in alert_dispatches. Never silently dropped, never
-// falsely confirmed.
+// A channel type with no registered dispatcher (there is none today — every
+// type alert_channels' own CHECK constraint allows has a real dispatcher as
+// of B-014) is still reported back exactly as ADR-0006 originally reported
+// unimplemented types: unconfirmed, with a "not implemented" last_error
+// recorded in alert_dispatches. Never silently dropped, never falsely
+// confirmed. This is now a defensive guard for a mis-wired router rather
+// than production's actual answer for any real channel type.
 type ChannelRouter struct {
 	byType map[string]Dispatcher
 }
@@ -45,15 +49,21 @@ func NewChannelRouter(byType map[string]Dispatcher) *ChannelRouter {
 // NewDefaultDispatcher is the one construction every production entry point
 // uses (scheduler.New, main.go's agent-facing OTLP path). Having exactly one
 // such function is deliberate: Session 17 had to update two independent call
-// sites in lockstep to add one dispatcher, and this session would have made
-// that three.
+// sites in lockstep to add one dispatcher, Session 18 would have made that
+// three, and this session (B-014) would have made it four.
 //
 // pool is required by PushDispatcher (device_tokens lives there); client may
-// be nil.
-func NewDefaultDispatcher(pool *pgxpool.Pool, client *http.Client) *ChannelRouter {
+// be nil. emailCfg is the outgoing SMTP relay account
+// (emailprovider.ConfigFromEnv) — a zero Config is not a construction
+// failure here, the same way a nil channelKey elsewhere in this package
+// isn't: EmailDispatcher.Dispatch reports an honest unconfirmed outcome for
+// any "email" channel rather than this constructor panicking or refusing to
+// start a process that has no email channel configured yet.
+func NewDefaultDispatcher(pool *pgxpool.Pool, client *http.Client, emailCfg emailprovider.Config) *ChannelRouter {
 	return NewChannelRouter(map[string]Dispatcher{
 		"webhook": NewWebhookDispatcher(client),
 		"push":    NewPushDispatcher(pool, client),
+		"email":   NewEmailDispatcher(emailCfg),
 	})
 }
 

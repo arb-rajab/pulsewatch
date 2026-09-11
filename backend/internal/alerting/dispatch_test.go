@@ -311,10 +311,12 @@ func TestWebhookDispatcher_NonRetryableStatusStopsImmediately(t *testing.T) {
 	}
 }
 
-// TestNotifyChannels_EmailChannelReportedNotImplemented proves ADR-0006's
-// explicit scope boundary: an "email" channel is never silently dropped or
-// falsely confirmed — it comes back unconfirmed with a last_error saying
-// plainly that email delivery isn't built this session.
+// TestNotifyChannels_EmailChannelReportedNotImplemented proves
+// WebhookDispatcher's own defensive type guard (unchanged since ADR-0006):
+// handed a non-"webhook" channel directly — bypassing ChannelRouter, which
+// is what production actually uses to reach EmailDispatcher (B-014,
+// emaildispatch_test.go) — it reports back unconfirmed rather than silently
+// dropping or falsely confirming the notification.
 func TestNotifyChannels_EmailChannelReportedNotImplemented(t *testing.T) {
 	pool := testPool(t)
 	targetID := insertTestTargetRow(t, pool)
