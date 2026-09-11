@@ -370,6 +370,40 @@ func TestBuildMessage_SanitizesHeaderValues(t *testing.T) {
 	}
 }
 
+// TestBuildMessage_BodyIsBase64EncodedAndRoundTrips proves Body's
+// Content-Transfer-Encoding: base64 rendering (go/email-injection's own
+// documented concern also covers the body, not just headers) both protects
+// and preserves: a Body crafted to look like an injected header or an
+// SMTP DATA terminator never appears as literal text anywhere in the
+// rendered message, and decoding the base64 content recovers the exact
+// original Body — legitimate multi-line content is not lost, only its
+// wire representation changed.
+func TestBuildMessage_BodyIsBase64EncodedAndRoundTrips(t *testing.T) {
+	malicious := "line one\r\n.\r\nMAIL FROM:<attacker@evil.invalid>\r\nX-Injected: yes\nline two"
+	msg := Message{Subject: "hi", Body: malicious}
+	rendered := string(buildMessage("from@example.invalid", "to@example.invalid", msg, time.Now()))
+
+	if !strings.Contains(rendered, "Content-Transfer-Encoding: base64\r\n") {
+		t.Fatalf("expected a Content-Transfer-Encoding: base64 header, got:\n%s", rendered)
+	}
+	if strings.Contains(rendered, "X-Injected:") || strings.Contains(rendered, "MAIL FROM:") {
+		t.Fatalf("body content leaked into the rendered message as literal text:\n%s", rendered)
+	}
+
+	headers, encodedBody, found := strings.Cut(rendered, "\r\n\r\n")
+	if !found {
+		t.Fatalf("expected a blank line separating headers from body, got:\n%s", rendered)
+	}
+	_ = headers
+	decoded, err := base64.StdEncoding.DecodeString(strings.ReplaceAll(encodedBody, "\r\n", ""))
+	if err != nil {
+		t.Fatalf("decode base64 body: %v", err)
+	}
+	if string(decoded) != malicious {
+		t.Fatalf("expected the decoded body to round-trip to the original, got %q, want %q", decoded, malicious)
+	}
+}
+
 func TestClient_SendUpgradesToSTARTTLSWhenAdvertised(t *testing.T) {
 	srv := newFakeSMTPServer(t)
 	srv.offerSTARTTLS = true

@@ -115,6 +115,29 @@ cannot speak to any relay that requires encryption — effectively every
 provider a self-hosted operator would actually point this at — which is a
 worse trade than the ~40 extra lines TLS support costs here.
 
+### 3a. Message construction: reject-or-encode every field, never raw-concatenate
+
+`buildMessage` (`internal/emailprovider/smtp.go`) treats every `Message`
+field as caller-supplied and untrusted, regardless of what this session's
+own one caller (`alerting.emailMessage`) actually puts in it — the package
+boundary, not the current call site, is what a library's own safety has to
+hold at. `to`/`msg.Subject` are rejected outright (a permanent
+`SendError`, before any network I/O) if they contain a CR or LF — the same
+reject-don't-mangle shape `net/smtp.Client`'s own `validateLine` already
+uses internally for these two values. `Subject` is additionally rendered
+via RFC 2047 `mime.QEncoding.Encode`, and `Body` via RFC 2045
+`Content-Transfer-Encoding: base64` — both structural guarantees rather
+than heuristic ones: their output alphabets cannot contain a raw CR, LF, or
+a bare `.` line, so neither can inject a header, forge a `Bcc`, or
+prematurely terminate the SMTP `DATA` block, regardless of content. `Body`
+specifically cannot be CR/LF-rejected like `Subject`/`to` — a multi-line
+body legitimately needs line breaks — so encoding its wire representation,
+rather than restricting its content, is what keeps it both safe and
+unrestricted. (`net/textproto`'s own `DotWriter`, still in effect
+underneath this, already made the bare-`.`-line case safe at the protocol
+layer; the base64 encoding is a second, application-visible guarantee of
+the same property, not a replacement for it.)
+
 ### 4. What is and isn't a secret here (FR-023, unchanged discipline)
 
 The recipient address is `alert_channels.destination_encrypted`, AES-256-GCM

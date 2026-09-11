@@ -3,6 +3,7 @@ package emailprovider
 import (
 	"context"
 	"crypto/tls"
+	"encoding/base64"
 	"errors"
 	"mime"
 	"net"
@@ -196,10 +197,40 @@ func buildMessage(from, to string, msg Message, sentAt time.Time) []byte {
 	b.WriteString("Date: " + sentAt.Format(time.RFC1123Z) + "\r\n")
 	b.WriteString("MIME-Version: 1.0\r\n")
 	b.WriteString("Content-Type: text/plain; charset=\"utf-8\"\r\n")
+	b.WriteString("Content-Transfer-Encoding: base64\r\n")
 	b.WriteString("\r\n")
-	b.WriteString(strings.ReplaceAll(msg.Body, "\n", "\r\n"))
+	b.WriteString(encodeBodyBase64(msg.Body))
 	b.WriteString("\r\n")
 	return []byte(b.String())
+}
+
+// encodeBodyBase64 renders Body as base64 (RFC 2045 Content-Transfer-
+// Encoding: base64, wrapped at the standard 76 characters per line). Like
+// Subject's RFC 2047 encoding above, this is a structural guarantee, not a
+// heuristic one: base64's output alphabet is a fixed 65-character set that
+// cannot contain a raw CR, LF, or a bare "." line — so a Body cannot smuggle
+// an extra header, a forged Cc, or a premature end to the SMTP DATA block
+// (a bare "." line) regardless of what it contains, without depending on
+// net/textproto's own dot-stuffing (DotWriter, still in effect underneath
+// this as defense in depth) being the only thing standing between an
+// attacker-influenced Body and the raw wire. Body is legitimately
+// multi-line free text — the one Message field this package cannot reject
+// or strip newlines from without breaking the feature — so encoding its
+// transfer representation, not its content, is what keeps it both safe and
+// unrestricted.
+func encodeBodyBase64(body string) string {
+	encoded := base64.StdEncoding.EncodeToString([]byte(body))
+	const lineLen = 76
+	var b strings.Builder
+	for i := 0; i < len(encoded); i += lineLen {
+		end := i + lineLen
+		if end > len(encoded) {
+			end = len(encoded)
+		}
+		b.WriteString(encoded[i:end])
+		b.WriteString("\r\n")
+	}
+	return strings.TrimSuffix(b.String(), "\r\n")
 }
 
 // classify maps one failed protocol step onto ErrorKind. A *textproto.Error
