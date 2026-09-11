@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"net/http"
 	"strconv"
 	"time"
@@ -157,14 +158,27 @@ func processCheckResult(ctx context.Context, pool *pgxpool.Pool, dispatcher aler
 	if !ok || (outcome != OutcomeSuccess && outcome != OutcomeFailure) {
 		return validationErr("missing or invalid pulsewatch.outcome")
 	}
+	// latencyMS and the statusCode below both start life as an agent-supplied
+	// decimal string (OtlpValue.asInt parses it with no range beyond int64),
+	// unlike the identical-looking int32(resp.StatusCode) casts in
+	// internal/scheduler/check.go and cmd/agent/checker.go, where the source
+	// is Go's own net/http response and therefore already a small, trusted
+	// int. A malicious or buggy agent can put any int64 on the wire here, so
+	// each value is range-checked before the narrowing conversion instead of
+	// trusting the cast — CodeQL flagged both as "incorrect conversion
+	// between integer types" (go/incorrect-integer-conversion) precisely
+	// because neither had that check.
 	latencyMS, ok := attrs[AttrLatencyMS].asInt()
-	if !ok {
+	if !ok || latencyMS < 0 || latencyMS > math.MaxInt32 {
 		return validationErr("missing or invalid pulsewatch.latency_ms")
 	}
 
 	var statusCode *int32
 	if n, ok := attrs[AttrStatusCode].asInt(); ok {
-		v := int32(n) //nolint:gosec // HTTP status codes fit comfortably in int32
+		if n < 0 || n > math.MaxInt32 {
+			return validationErr("pulsewatch.status_code out of range")
+		}
+		v := int32(n)
 		statusCode = &v
 	}
 	var failureReason *string
