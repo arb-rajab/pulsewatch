@@ -1,10 +1,28 @@
 package operatorapi
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"testing"
+	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+// deleteIncidentCleanup deletes a directly-inserted incidents row on a
+// fresh, non-canceled context — never t.Context() inside the t.Cleanup
+// closure itself, which testing.T.Context documents as already canceled
+// by the time Cleanup functions run (B-006: see testdb_test.go's
+// deleteTargetCascade for the fuller explanation of this failure mode).
+func deleteIncidentCleanup(t *testing.T, pool *pgxpool.Pool, incidentID int64) {
+	t.Helper()
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_, _ = pool.Exec(ctx, `DELETE FROM incidents WHERE id = $1`, incidentID)
+	})
+}
 
 func TestGetTargetIncidents_EmptyForFreshTarget(t *testing.T) {
 	pool := testPool(t)
@@ -57,7 +75,7 @@ func TestGetTargetIncidents_OpenAndResolvedNewestFirst(t *testing.T) {
 		created.ID).Scan(&olderResolvedID); err != nil {
 		t.Fatalf("insert resolved test incident: %v", err)
 	}
-	t.Cleanup(func() { _, _ = pool.Exec(t.Context(), `DELETE FROM incidents WHERE id = $1`, olderResolvedID) })
+	deleteIncidentCleanup(t, pool, olderResolvedID)
 
 	var newerOpenID int64
 	if err := pool.QueryRow(t.Context(),
@@ -65,7 +83,7 @@ func TestGetTargetIncidents_OpenAndResolvedNewestFirst(t *testing.T) {
 		created.ID).Scan(&newerOpenID); err != nil {
 		t.Fatalf("insert open test incident: %v", err)
 	}
-	t.Cleanup(func() { _, _ = pool.Exec(t.Context(), `DELETE FROM incidents WHERE id = $1`, newerOpenID) })
+	deleteIncidentCleanup(t, pool, newerOpenID)
 
 	w := doRequest(t, r, http.MethodGet, "/api/v1/targets/"+created.ID+"/incidents", cookie, nil)
 	if w.Code != http.StatusOK {
@@ -115,7 +133,7 @@ func TestGetTargetIncidents_ScopedToOwnTarget(t *testing.T) {
 		targetA.ID).Scan(&incidentAID); err != nil {
 		t.Fatalf("insert incident for target A: %v", err)
 	}
-	t.Cleanup(func() { _, _ = pool.Exec(t.Context(), `DELETE FROM incidents WHERE id = $1`, incidentAID) })
+	deleteIncidentCleanup(t, pool, incidentAID)
 
 	w := doRequest(t, r, http.MethodGet, "/api/v1/targets/"+targetB.ID+"/incidents", cookie, nil)
 	if w.Code != http.StatusOK {

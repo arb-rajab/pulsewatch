@@ -22,9 +22,7 @@ func TestTargets_FullCrudLifecycle_ThroughRealGatedHTTP(t *testing.T) {
 	if err := json.Unmarshal(wCreate.Body.Bytes(), &created); err != nil {
 		t.Fatalf("decode create response: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(t.Context(), `DELETE FROM targets WHERE id = $1::uuid`, created.ID)
-	})
+	t.Cleanup(func() { deleteTargetCascade(pool, created.ID) })
 	if created.URL == nil || *created.URL != "http://example.invalid/targets-crud" {
 		t.Fatalf("expected url echoed back, got %+v", created.URL)
 	}

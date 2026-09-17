@@ -122,13 +122,33 @@ RETURNING id::text`,
 		t.Fatalf("insert target_schedule: %v", err)
 	}
 
-	t.Cleanup(func() {
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_, _ = pool.Exec(cleanupCtx, `DELETE FROM targets WHERE id = $1::uuid`, targetID)
-	})
+	t.Cleanup(func() { deleteTargetCascade(pool, targetID) })
 
 	return targetID
+}
+
+// deleteTargetCascade removes a target and every row that a plain
+// REFERENCES-only child table (no ON DELETE CASCADE) still holds against
+// it, in dependency order, before deleting the target itself.
+//
+// Root cause of B-006: a bare `DELETE FROM targets` here silently failed
+// (a foreign-key violation whose error this fixture discards via `_, _ =`)
+// whenever a test's POST /v1/logs call actually made processCheckResult
+// (logs.go) call alerting.NotifyChannels — which opens an incident and
+// writes an alert_dispatches row referencing it — leaving the target (and
+// everything still pointing at it) orphaned in the shared test Postgres
+// instead of failing loudly, matching scheduler's own identical fixture
+// and internal/rollup.insertTestTarget's already-correct child-first
+// ordering. target_schedule needs no explicit delete: it's the one child
+// table with ON DELETE CASCADE (see its own migration's comment).
+func deleteTargetCascade(pool *pgxpool.Pool, targetID string) {
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, _ = pool.Exec(cleanupCtx, `DELETE FROM alert_dispatches WHERE incident_id IN (SELECT id FROM incidents WHERE target_id = $1::uuid)`, targetID)
+	_, _ = pool.Exec(cleanupCtx, `DELETE FROM incidents WHERE target_id = $1::uuid`, targetID)
+	_, _ = pool.Exec(cleanupCtx, `DELETE FROM check_results WHERE target_id = $1::uuid`, targetID)
+	_, _ = pool.Exec(cleanupCtx, `DELETE FROM check_rollups_hourly WHERE target_id = $1::uuid`, targetID)
+	_, _ = pool.Exec(cleanupCtx, `DELETE FROM targets WHERE id = $1::uuid`, targetID)
 }
 
 func fetchStreakState(t *testing.T, pool *pgxpool.Pool, targetID string) (streak int, state string) {
@@ -198,6 +218,14 @@ INSERT INTO alert_channels (type, destination_encrypted) VALUES ('webhook', $1) 
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
+		// alert_dispatches has a plain REFERENCES to alert_channels (no ON
+		// DELETE CASCADE), and this cleanup runs before insertAssignedTarget's
+		// own (t.Cleanup is LIFO, and this fixture is always called after the
+		// target fixture in this package's tests) — so a dispatch row
+		// processCheckResult's real alerting.NotifyChannels call produced is
+		// still there when this closure runs. Delete it first, same B-006 fix
+		// as deleteTargetCascade.
+		_, _ = pool.Exec(ctx, `DELETE FROM alert_dispatches WHERE alert_channel_id = $1::uuid`, channelID)
 		_, _ = pool.Exec(ctx, `DELETE FROM alert_channels WHERE id = $1::uuid`, channelID)
 	})
 	return channelID

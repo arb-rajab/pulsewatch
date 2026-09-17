@@ -93,12 +93,24 @@ func insertTestAgentForCredentialShapeTest(t *testing.T, pool *pgxpool.Pool) (id
 	if err != nil {
 		t.Fatalf("create test agent: %v", err)
 	}
+	deleteAgentCleanup(t, pool, created.ID)
+	return created.ID, created.Token
+}
+
+// deleteAgentCleanup deletes an agent on a fresh, non-canceled context —
+// never t.Context() inside the t.Cleanup closure itself (B-006: see
+// deleteTargetCascade below for why that context is already canceled by
+// the time Cleanup functions run). Any target still assigned to this agent
+// (plain REFERENCES, no ON DELETE CASCADE) must be cleaned up or
+// unassigned first — same ordering requirement as deleteTargetCascade's
+// own child tables.
+func deleteAgentCleanup(t *testing.T, pool *pgxpool.Pool, agentID string) {
+	t.Helper()
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		_, _ = pool.Exec(ctx, `DELETE FROM agents WHERE id = $1::uuid`, created.ID)
+		_, _ = pool.Exec(ctx, `DELETE FROM agents WHERE id = $1::uuid`, agentID)
 	})
-	return created.ID, created.Token
 }
 
 // realSessionCookie issues a real, valid session token via operatorauth
@@ -197,4 +209,33 @@ func cleanupDeviceToken(t *testing.T, pool *pgxpool.Pool, id string) {
 		defer cancel()
 		_, _ = pool.Exec(ctx, `DELETE FROM device_tokens WHERE id = $1::uuid`, id)
 	})
+}
+
+// deleteTargetCascade removes a target and every row that a plain
+// REFERENCES-only child table (no ON DELETE CASCADE) still holds against
+// it, in dependency order, before deleting the target itself.
+//
+// Root cause of B-006 in this package specifically: targets_test.go,
+// status_test.go, and agents_test.go's own createTestTarget/inline target
+// cleanups predate this file's shared testPool/t.Cleanup convention and
+// used `t.Context()` *inside* their t.Cleanup closures. testing.T.Context
+// is documented as "canceled just before Cleanup-registered functions are
+// called" — so that context was already canceled the instant each closure
+// ran, and pool.Exec returned context.Canceled immediately, without ever
+// reaching Postgres. The delete wasn't merely losing a race with a foreign
+// key; it never ran at all. This helper fixes both problems at once: a
+// fresh, non-canceled context (matching every other package's own
+// convention), and child-before-parent deletes so a target an in-process
+// check pipeline has already attached incidents/check_results/rollups to
+// still deletes cleanly. target_schedule needs no explicit delete: it's
+// the one child table with ON DELETE CASCADE (see its own migration's
+// comment).
+func deleteTargetCascade(pool *pgxpool.Pool, targetID string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, _ = pool.Exec(ctx, `DELETE FROM alert_dispatches WHERE incident_id IN (SELECT id FROM incidents WHERE target_id = $1::uuid)`, targetID)
+	_, _ = pool.Exec(ctx, `DELETE FROM incidents WHERE target_id = $1::uuid`, targetID)
+	_, _ = pool.Exec(ctx, `DELETE FROM check_results WHERE target_id = $1::uuid`, targetID)
+	_, _ = pool.Exec(ctx, `DELETE FROM check_rollups_hourly WHERE target_id = $1::uuid`, targetID)
+	_, _ = pool.Exec(ctx, `DELETE FROM targets WHERE id = $1::uuid`, targetID)
 }

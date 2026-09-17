@@ -33,7 +33,9 @@ func TestAlertChannels_FullLifecycle_ThroughRealGatedHTTP(t *testing.T) {
 		t.Fatalf("decode create response: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(t.Context(), `DELETE FROM alert_channels WHERE id = $1::uuid`, created.ID)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_, _ = pool.Exec(ctx, `DELETE FROM alert_channels WHERE id = $1::uuid`, created.ID)
 	})
 
 	// The destination really is encrypted at rest, not stored in plaintext.

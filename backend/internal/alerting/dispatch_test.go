@@ -40,9 +40,13 @@ INSERT INTO alert_channels (type, destination_encrypted) VALUES ($1, $2) RETURNI
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		// Best-effort: alert_dispatches rows referencing this channel (plain
-		// REFERENCES, no ON DELETE CASCADE) will block this delete — same
-		// accepted looseness as scheduler.insertTestTarget's own cleanup.
+		// alert_dispatches has a plain REFERENCES to alert_channels (no ON
+		// DELETE CASCADE), and this fixture's own cleanup runs before any
+		// target/incident cleanup registered earlier in the same test (t.Cleanup
+		// is LIFO) — so a dispatch row this test produced is still there when
+		// this closure runs. Delete it first, the same B-006 child-before-
+		// parent fix as testdb_test.go's deleteTargetCascade.
+		_, _ = pool.Exec(ctx, `DELETE FROM alert_dispatches WHERE alert_channel_id = $1::uuid`, channelID)
 		_, _ = pool.Exec(ctx, `DELETE FROM alert_channels WHERE id = $1::uuid`, channelID)
 	})
 
