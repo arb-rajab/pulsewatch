@@ -178,7 +178,7 @@ func randomSuffix(t *testing.T) string {
 
 func insertTestDeviceToken(t *testing.T, pool *pgxpool.Pool, operatorID, provider, platform, token string) string {
 	t.Helper()
-	record, err := RegisterDeviceToken(t.Context(), pool, operatorID, provider, platform, token)
+	record, err := RegisterDeviceToken(t.Context(), pool, testEncryptionKey, operatorID, provider, platform, token)
 	if err != nil {
 		t.Fatalf("RegisterDeviceToken: %v", err)
 	}
@@ -202,6 +202,7 @@ func fastPushDispatcher(pool *pgxpool.Pool, srv *mockFCM, logger *slog.Logger) *
 	return &PushDispatcher{
 		Pool:              pool,
 		Client:            srv.Client(),
+		Key:               testEncryptionKey,
 		MaxAttempts:       3,
 		BackoffBase:       5 * time.Millisecond,
 		BackoffMax:        20 * time.Millisecond,

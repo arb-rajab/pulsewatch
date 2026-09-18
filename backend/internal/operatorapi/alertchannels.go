@@ -55,6 +55,12 @@ func CreateAlertChannel(pool *pgxpool.Pool, channelKey []byte) gin.HandlerFunc {
 			writeFieldError(c, http.StatusUnprocessableEntity, "validation_error", "type must be one of \"webhook\", \"email\", or \"push\"", "type")
 			return
 		}
+		if req.Type == "webhook" {
+			if err := alerting.ValidateWebhookURL(c.Request.Context(), req.Destination); err != nil {
+				writeFieldError(c, http.StatusUnprocessableEntity, "validation_error", "destination "+err.Error(), "destination")
+				return
+			}
+		}
 		if channelKey == nil {
 			writeError(c, http.StatusServiceUnavailable, "encryption_key_unavailable", "ALERT_CHANNEL_ENCRYPTION_KEY is not configured")
 			return
@@ -146,6 +152,24 @@ func RotateAlertChannelSecret(pool *pgxpool.Pool, channelKey []byte) gin.Handler
 			writeError(c, http.StatusServiceUnavailable, "encryption_key_unavailable", "ALERT_CHANNEL_ENCRYPTION_KEY is not configured")
 			return
 		}
+
+		ctx := c.Request.Context()
+		var channelType string
+		if err := pool.QueryRow(ctx, `SELECT type FROM alert_channels WHERE id = $1::uuid`, c.Param("alert_channel_id")).Scan(&channelType); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				writeError(c, http.StatusNotFound, "not_found", "alert channel not found")
+				return
+			}
+			writeError(c, http.StatusServiceUnavailable, "database_unavailable", "could not read alert channel")
+			return
+		}
+		if channelType == "webhook" {
+			if err := alerting.ValidateWebhookURL(ctx, req.Destination); err != nil {
+				writeFieldError(c, http.StatusUnprocessableEntity, "validation_error", "destination "+err.Error(), "destination")
+				return
+			}
+		}
+
 		encrypted, err := alerting.EncryptDestination(req.Destination, channelKey)
 		if err != nil {
 			writeError(c, http.StatusServiceUnavailable, "encryption_failed", "could not encrypt destination")
@@ -153,7 +177,7 @@ func RotateAlertChannelSecret(pool *pgxpool.Pool, channelKey []byte) gin.Handler
 		}
 
 		var id string
-		err = pool.QueryRow(c.Request.Context(),
+		err = pool.QueryRow(ctx,
 			`UPDATE alert_channels SET destination_encrypted = $1 WHERE id = $2::uuid RETURNING id::text`,
 			encrypted, c.Param("alert_channel_id"),
 		).Scan(&id)

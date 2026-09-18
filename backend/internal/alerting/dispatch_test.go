@@ -114,6 +114,10 @@ func fastDispatcher() *WebhookDispatcher {
 		BackoffBase:       5 * time.Millisecond,
 		BackoffMax:        20 * time.Millisecond,
 		PerAttemptTimeout: 2 * time.Second,
+		// These tests deliver to a real httptest.Server, a loopback address
+		// by construction — the SSRF guard (ssrf.go) would otherwise block
+		// every one of them. See AllowPrivateNetworks's own doc comment.
+		AllowPrivateNetworks: true,
 	}
 }
 

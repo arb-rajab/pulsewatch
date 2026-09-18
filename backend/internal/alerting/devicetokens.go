@@ -2,6 +2,9 @@ package alerting
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
@@ -50,6 +53,28 @@ const maxDeviceTokenLength = 4096
 // before it ever reaches Postgres.
 var ErrInvalidDeviceToken = errors.New("invalid device token registration")
 
+// ErrDeviceTokenEncryptionKeyUnavailable is returned by RegisterDeviceToken
+// when key is nil — the same "fail the write loudly, never fall back to
+// plaintext" behavior operatorapi.CreateAlertChannel already gives a
+// missing ALERT_CHANNEL_ENCRYPTION_KEY.
+var ErrDeviceTokenEncryptionKeyUnavailable = errors.New("device token encryption key unavailable")
+
+// HashDeviceToken computes device_tokens.token_hash: a deterministic
+// HMAC-SHA256 of token, keyed by the same ALERT_CHANNEL_ENCRYPTION_KEY that
+// encrypts it. It exists because AES-256-GCM's randomised nonce
+// (EncryptDestination) makes token_encrypted a different ciphertext on every
+// call — useless as a lookup key — while RegisterDeviceToken's upsert (and
+// the schema's own uniqueness constraint) needs to find "this exact token,
+// for this provider" deterministically. Keyed rather than a bare SHA-256 so
+// the hash itself doesn't become a practical offline dictionary/rainbow-
+// table target for whatever entropy a specific provider's token format
+// turns out to have.
+func HashDeviceToken(token string, key []byte) string {
+	mac := hmac.New(sha256.New, key)
+	_, _ = mac.Write([]byte(token)) // hash.Hash.Write never errors
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
 // DeviceTokenRecord is one registered device, as the operator API reports
 // it. The token value itself is deliberately absent: it is accepted on
 // write and used on dispatch, and there is no read path that hands it back
@@ -84,6 +109,9 @@ type liveDeviceToken struct {
 }
 
 // RegisterDeviceToken upserts one (provider, token) pair for operatorID.
+// key is ALERT_CHANNEL_ENCRYPTION_KEY (the same key alert_channels'
+// destination_encrypted uses) — see HashDeviceToken and EncryptDestination
+// for what it's used for here.
 //
 // Re-registering an existing token is the normal case, not an error: a
 // mobile app re-registers on every launch and after every provider-side
@@ -91,7 +119,7 @@ type liveDeviceToken struct {
 // dead_reason — a device that has just told us it holds this token is,
 // by direct evidence, live again, and refusing to resurrect it would mean
 // one transient dead-marking silently muted an operator's phone forever.
-func RegisterDeviceToken(ctx context.Context, pool *pgxpool.Pool, operatorID, provider, platform, token string) (DeviceTokenRecord, error) {
+func RegisterDeviceToken(ctx context.Context, pool *pgxpool.Pool, key []byte, operatorID, provider, platform, token string) (DeviceTokenRecord, error) {
 	token = strings.TrimSpace(token)
 	switch {
 	case !ValidPushProvider(provider):
@@ -103,13 +131,23 @@ func RegisterDeviceToken(ctx context.Context, pool *pgxpool.Pool, operatorID, pr
 	case len(token) > maxDeviceTokenLength:
 		return DeviceTokenRecord{}, fmt.Errorf("%w: token exceeds %d characters", ErrInvalidDeviceToken, maxDeviceTokenLength)
 	}
+	if key == nil {
+		return DeviceTokenRecord{}, ErrDeviceTokenEncryptionKeyUnavailable
+	}
+
+	encrypted, err := EncryptDestination(token, key)
+	if err != nil {
+		return DeviceTokenRecord{}, fmt.Errorf("encrypt device token: %w", err)
+	}
+	hash := HashDeviceToken(token, key)
 
 	const stmt = `
-INSERT INTO device_tokens (operator_id, provider, platform, token)
-VALUES ($1::uuid, $2, $3, $4)
-ON CONFLICT (provider, token) DO UPDATE SET
+INSERT INTO device_tokens (operator_id, provider, platform, token_encrypted, token_hash)
+VALUES ($1::uuid, $2, $3, $4, $5)
+ON CONFLICT (provider, token_hash) DO UPDATE SET
     operator_id        = EXCLUDED.operator_id,
     platform           = EXCLUDED.platform,
+    token_encrypted     = EXCLUDED.token_encrypted,
     last_registered_at = now(),
     revoked_at         = NULL,
     dead_at            = NULL,
@@ -117,7 +155,7 @@ ON CONFLICT (provider, token) DO UPDATE SET
 RETURNING id::text, provider, platform, created_at, last_registered_at, last_delivered_at, revoked_at, dead_at, dead_reason`
 
 	var rec DeviceTokenRecord
-	err := pool.QueryRow(ctx, stmt, operatorID, provider, platform, token).Scan(
+	err = pool.QueryRow(ctx, stmt, operatorID, provider, platform, encrypted, hash).Scan(
 		&rec.ID, &rec.Provider, &rec.Platform, &rec.CreatedAt,
 		&rec.LastRegisteredAt, &rec.LastDeliveredAt, &rec.RevokedAt, &rec.DeadAt, &rec.DeadReason,
 	)
@@ -193,9 +231,9 @@ ORDER BY last_registered_at DESC`
 // API can be per-account without a schema change if that ever stops being
 // true — the same "model the table properly, don't build the feature"
 // discipline 04-data-model.md applies to the operators table itself.
-func loadLiveDeviceTokens(ctx context.Context, pool *pgxpool.Pool, provider string) ([]liveDeviceToken, error) {
+func loadLiveDeviceTokens(ctx context.Context, pool *pgxpool.Pool, key []byte, provider string) ([]liveDeviceToken, error) {
 	const stmt = `
-SELECT id::text, token FROM device_tokens
+SELECT id::text, token_encrypted FROM device_tokens
 WHERE provider = $1 AND revoked_at IS NULL AND dead_at IS NULL
 ORDER BY last_registered_at DESC`
 
@@ -207,11 +245,18 @@ ORDER BY last_registered_at DESC`
 
 	var tokens []liveDeviceToken
 	for rows.Next() {
-		var tok liveDeviceToken
-		if err := rows.Scan(&tok.id, &tok.token); err != nil {
+		var id, encrypted string
+		if err := rows.Scan(&id, &encrypted); err != nil {
 			return nil, fmt.Errorf("scan live device_tokens row: %w", err)
 		}
-		tokens = append(tokens, tok)
+		if key == nil {
+			return nil, fmt.Errorf("device token %s exists but ALERT_CHANNEL_ENCRYPTION_KEY is not configured", id)
+		}
+		token, err := decryptDestination(encrypted, key)
+		if err != nil {
+			return nil, fmt.Errorf("decrypt device token %s: %w", id, err)
+		}
+		tokens = append(tokens, liveDeviceToken{id: id, token: token})
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("query live device_tokens: %w", err)

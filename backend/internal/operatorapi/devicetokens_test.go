@@ -140,6 +140,58 @@ func TestRegisterDeviceToken_ValidatesItsInputs(t *testing.T) {
 	}
 }
 
+// TestRegisterDeviceToken_EncryptsTokenAtRest is B-012's regression proof
+// for T-09 (06-security-threat-model.md): device_tokens.token_encrypted must
+// really hold AES-256-GCM ciphertext, not the plaintext token, and this
+// reads the raw column value directly from Postgres — never through
+// alerting's own decrypt path — so a regression that silently stored
+// plaintext into the "encrypted" column would still be caught here.
+func TestRegisterDeviceToken_EncryptsTokenAtRest(t *testing.T) {
+	pool := testPool(t)
+	r := testRouter(pool)
+	operatorID := insertTestOperator(t, pool, "device-token-encrypted@example.invalid", "correct-horse-battery-staple")
+	cookie := realSessionCookie(t, operatorID)
+	token := "fcm-plaintext-secret-" + randomHex(t)
+
+	status, record := registerDeviceToken(t, r, cookie, "fcm", "android", token)
+	if status != http.StatusOK {
+		t.Fatalf("expected 200, got %d", status)
+	}
+	t.Cleanup(func() { cleanupDeviceToken(t, pool, record.ID) })
+
+	// The old plaintext column no longer exists at all (migration 000013)
+	// — this is the "column doesn't exist" proof that the schema itself
+	// carries the guarantee, not just a query that happens not to ask for
+	// a still-present column.
+	var count int
+	err := pool.QueryRow(t.Context(),
+		`SELECT count(*) FROM information_schema.columns WHERE table_name = 'device_tokens' AND column_name = 'token'`,
+	).Scan(&count)
+	if err != nil {
+		t.Fatalf("check device_tokens columns: %v", err)
+	}
+	if count != 0 {
+		t.Fatal("expected device_tokens to have no plaintext token column after migration 000013")
+	}
+
+	var tokenEncrypted, tokenHash string
+	err = pool.QueryRow(t.Context(),
+		`SELECT token_encrypted, token_hash FROM device_tokens WHERE id = $1::uuid`, record.ID,
+	).Scan(&tokenEncrypted, &tokenHash)
+	if err != nil {
+		t.Fatalf("read raw device_tokens row: %v", err)
+	}
+	if tokenEncrypted == token {
+		t.Fatal("token_encrypted must not equal the plaintext token")
+	}
+	if strings.Contains(tokenEncrypted, token) {
+		t.Fatal("token_encrypted must not contain the plaintext token as a substring")
+	}
+	if tokenHash == "" || tokenHash == token {
+		t.Fatal("expected a non-empty, non-plaintext token_hash")
+	}
+}
+
 // TestListAndUnregisterDeviceTokens covers the remaining two operations and
 // the id-enumeration property the 404 is chosen for.
 func TestListAndUnregisterDeviceTokens(t *testing.T) {

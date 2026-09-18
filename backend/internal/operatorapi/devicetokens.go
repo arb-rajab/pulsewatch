@@ -34,7 +34,11 @@ type deviceTokenRegisterRequest struct {
 // app re-registering an unchanged token on every launch (the normal case,
 // and the only way a token that was wrongly marked dead ever comes back) is
 // not creating anything.
-func RegisterDeviceToken(pool *pgxpool.Pool) gin.HandlerFunc {
+//
+// channelKey is ALERT_CHANNEL_ENCRYPTION_KEY — the same key
+// CreateAlertChannel uses, reused here (not a second key) to encrypt
+// device_tokens.token_encrypted (see internal/alerting/devicetokens.go).
+func RegisterDeviceToken(pool *pgxpool.Pool, channelKey []byte) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		operatorID, ok := OperatorIDFrom(c)
 		if !ok {
@@ -56,12 +60,16 @@ func RegisterDeviceToken(pool *pgxpool.Pool) gin.HandlerFunc {
 			return
 		}
 
-		record, err := alerting.RegisterDeviceToken(c.Request.Context(), pool, operatorID, req.Provider, req.Platform, req.Token)
+		record, err := alerting.RegisterDeviceToken(c.Request.Context(), pool, channelKey, operatorID, req.Provider, req.Platform, req.Token)
 		if err != nil {
 			if errors.Is(err, alerting.ErrInvalidDeviceToken) {
 				// alerting's message describes the token's shape (empty, too
 				// long), never its value.
 				writeFieldError(c, http.StatusUnprocessableEntity, "validation_error", err.Error(), "token")
+				return
+			}
+			if errors.Is(err, alerting.ErrDeviceTokenEncryptionKeyUnavailable) {
+				writeError(c, http.StatusServiceUnavailable, "encryption_key_unavailable", "ALERT_CHANNEL_ENCRYPTION_KEY is not configured")
 				return
 			}
 			writeError(c, http.StatusServiceUnavailable, "database_unavailable", "could not register device token")

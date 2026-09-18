@@ -17,7 +17,7 @@ func TestRegisterDeviceToken_UpsertResurrectsADeadToken(t *testing.T) {
 	operatorID := insertTestOperatorRow(t, pool)
 	token := "fcm-token-resurrect-" + randomSuffix(t)
 
-	first, err := RegisterDeviceToken(t.Context(), pool, operatorID, "fcm", "android", token)
+	first, err := RegisterDeviceToken(t.Context(), pool, testEncryptionKey, operatorID, "fcm", "android", token)
 	if err != nil {
 		t.Fatalf("RegisterDeviceToken: %v", err)
 	}
@@ -25,7 +25,7 @@ func TestRegisterDeviceToken_UpsertResurrectsADeadToken(t *testing.T) {
 		t.Fatalf("markDeviceTokenDead: %v", err)
 	}
 
-	live, err := loadLiveDeviceTokens(t.Context(), pool, "fcm")
+	live, err := loadLiveDeviceTokens(t.Context(), pool, testEncryptionKey, "fcm")
 	if err != nil {
 		t.Fatalf("loadLiveDeviceTokens: %v", err)
 	}
@@ -33,7 +33,7 @@ func TestRegisterDeviceToken_UpsertResurrectsADeadToken(t *testing.T) {
 		t.Fatal("expected a dead token to be excluded from the fan-out set")
 	}
 
-	second, err := RegisterDeviceToken(t.Context(), pool, operatorID, "fcm", "android", token)
+	second, err := RegisterDeviceToken(t.Context(), pool, testEncryptionKey, operatorID, "fcm", "android", token)
 	if err != nil {
 		t.Fatalf("re-RegisterDeviceToken: %v", err)
 	}
@@ -50,7 +50,7 @@ func TestRegisterDeviceToken_UpsertResurrectsADeadToken(t *testing.T) {
 		t.Fatal("expected last_registered_at to advance on re-registration")
 	}
 
-	live, err = loadLiveDeviceTokens(t.Context(), pool, "fcm")
+	live, err = loadLiveDeviceTokens(t.Context(), pool, testEncryptionKey, "fcm")
 	if err != nil {
 		t.Fatalf("loadLiveDeviceTokens: %v", err)
 	}
@@ -68,7 +68,7 @@ func TestRevokeDeviceToken_RemovesFromFanOutAndIsScopedToItsOperator(t *testing.
 	owner := insertTestOperatorRow(t, pool)
 	stranger := insertTestOperatorRow(t, pool)
 
-	record, err := RegisterDeviceToken(t.Context(), pool, owner, "apns", "ios", "apns-token-revoke-"+randomSuffix(t))
+	record, err := RegisterDeviceToken(t.Context(), pool, testEncryptionKey, owner, "apns", "ios", "apns-token-revoke-"+randomSuffix(t))
 	if err != nil {
 		t.Fatalf("RegisterDeviceToken: %v", err)
 	}
@@ -100,7 +100,7 @@ func TestRevokeDeviceToken_RemovesFromFanOutAndIsScopedToItsOperator(t *testing.
 		t.Fatal("expected RevokedAt to be set after RevokeDeviceToken")
 	}
 
-	live, err := loadLiveDeviceTokens(t.Context(), pool, "apns")
+	live, err := loadLiveDeviceTokens(t.Context(), pool, testEncryptionKey, "apns")
 	if err != nil {
 		t.Fatalf("loadLiveDeviceTokens: %v", err)
 	}
@@ -122,16 +122,16 @@ func TestLoadLiveDeviceTokens_IsScopedToItsProvider(t *testing.T) {
 	pool := testPool(t)
 	operatorID := insertTestOperatorRow(t, pool)
 
-	fcmRecord, err := RegisterDeviceToken(t.Context(), pool, operatorID, "fcm", "android", "fcm-token-scope-"+randomSuffix(t))
+	fcmRecord, err := RegisterDeviceToken(t.Context(), pool, testEncryptionKey, operatorID, "fcm", "android", "fcm-token-scope-"+randomSuffix(t))
 	if err != nil {
 		t.Fatalf("RegisterDeviceToken(fcm): %v", err)
 	}
-	apnsRecord, err := RegisterDeviceToken(t.Context(), pool, operatorID, "apns", "ios", "apns-token-scope-"+randomSuffix(t))
+	apnsRecord, err := RegisterDeviceToken(t.Context(), pool, testEncryptionKey, operatorID, "apns", "ios", "apns-token-scope-"+randomSuffix(t))
 	if err != nil {
 		t.Fatalf("RegisterDeviceToken(apns): %v", err)
 	}
 
-	fcmLive, err := loadLiveDeviceTokens(t.Context(), pool, "fcm")
+	fcmLive, err := loadLiveDeviceTokens(t.Context(), pool, testEncryptionKey, "fcm")
 	if err != nil {
 		t.Fatalf("loadLiveDeviceTokens(fcm): %v", err)
 	}
@@ -139,7 +139,7 @@ func TestLoadLiveDeviceTokens_IsScopedToItsProvider(t *testing.T) {
 		t.Fatal("expected the fcm fan-out set to contain only fcm tokens")
 	}
 
-	apnsLive, err := loadLiveDeviceTokens(t.Context(), pool, "apns")
+	apnsLive, err := loadLiveDeviceTokens(t.Context(), pool, testEncryptionKey, "apns")
 	if err != nil {
 		t.Fatalf("loadLiveDeviceTokens(apns): %v", err)
 	}
@@ -168,7 +168,7 @@ func TestRegisterDeviceToken_RejectsInvalidRegistrations(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := RegisterDeviceToken(t.Context(), pool, operatorID, tc.provider, tc.platform, tc.token)
+			_, err := RegisterDeviceToken(t.Context(), pool, testEncryptionKey, operatorID, tc.provider, tc.platform, tc.token)
 			if !errors.Is(err, ErrInvalidDeviceToken) {
 				t.Fatalf("expected ErrInvalidDeviceToken, got %v", err)
 			}
@@ -184,7 +184,7 @@ func TestListDeviceTokens_ShowsDeadReasonAndNeverTheTokenItself(t *testing.T) {
 	operatorID := insertTestOperatorRow(t, pool)
 	token := "fcm-token-listed-" + randomSuffix(t)
 
-	record, err := RegisterDeviceToken(t.Context(), pool, operatorID, "fcm", "android", token)
+	record, err := RegisterDeviceToken(t.Context(), pool, testEncryptionKey, operatorID, "fcm", "android", token)
 	if err != nil {
 		t.Fatalf("RegisterDeviceToken: %v", err)
 	}
@@ -209,6 +209,75 @@ func TestListDeviceTokens_ShowsDeadReasonAndNeverTheTokenItself(t *testing.T) {
 	// future field addition has to break a test to break the guarantee.
 	if containsString(marshalRecord(t, got), token) {
 		t.Fatal("FR-023-style: a device token must never be readable back through the API")
+	}
+}
+
+// TestHashDeviceToken_DeterministicAndDistinguishesTokens proves the
+// blind-index property RegisterDeviceToken's ON CONFLICT (provider,
+// token_hash) upsert depends on: the same token always hashes to the same
+// value (so re-registration finds the existing row), and different tokens
+// hash to different values (so two real devices' tokens never collide).
+func TestHashDeviceToken_DeterministicAndDistinguishesTokens(t *testing.T) {
+	a := HashDeviceToken("token-one", testEncryptionKey)
+	aAgain := HashDeviceToken("token-one", testEncryptionKey)
+	b := HashDeviceToken("token-two", testEncryptionKey)
+
+	if a != aAgain {
+		t.Fatal("expected HashDeviceToken to be deterministic for the same token+key")
+	}
+	if a == b {
+		t.Fatal("expected different tokens to hash differently")
+	}
+	if a == "token-one" {
+		t.Fatal("hash must not equal the plaintext token")
+	}
+}
+
+// TestRegisterDeviceToken_EncryptsAtRest is the package-level regression
+// proof for T-09 (06-security-threat-model.md): reading device_tokens
+// directly from Postgres (never through decryptDestination) must never
+// surface the plaintext token.
+func TestRegisterDeviceToken_EncryptsAtRest(t *testing.T) {
+	pool := testPool(t)
+	operatorID := insertTestOperatorRow(t, pool)
+	token := "fcm-token-encrypted-at-rest-" + randomSuffix(t)
+
+	record, err := RegisterDeviceToken(t.Context(), pool, testEncryptionKey, operatorID, "fcm", "android", token)
+	if err != nil {
+		t.Fatalf("RegisterDeviceToken: %v", err)
+	}
+
+	var tokenEncrypted, tokenHash string
+	if err := pool.QueryRow(t.Context(),
+		`SELECT token_encrypted, token_hash FROM device_tokens WHERE id = $1::uuid`, record.ID,
+	).Scan(&tokenEncrypted, &tokenHash); err != nil {
+		t.Fatalf("read raw device_tokens row: %v", err)
+	}
+	if tokenEncrypted == token || strings.Contains(tokenEncrypted, token) {
+		t.Fatal("token_encrypted must never contain the plaintext token")
+	}
+
+	decrypted, err := decryptDestination(tokenEncrypted, testEncryptionKey)
+	if err != nil {
+		t.Fatalf("decryptDestination: %v", err)
+	}
+	if decrypted != token {
+		t.Fatalf("expected decrypted token_encrypted to round-trip to %q, got %q", token, decrypted)
+	}
+	if tokenHash != HashDeviceToken(token, testEncryptionKey) {
+		t.Fatal("expected token_hash to match HashDeviceToken(token, key)")
+	}
+}
+
+// TestRegisterDeviceToken_MissingKeyFailsClosed proves a nil key is a real
+// error, never a silent fall-back to storing the token in plaintext.
+func TestRegisterDeviceToken_MissingKeyFailsClosed(t *testing.T) {
+	pool := testPool(t)
+	operatorID := insertTestOperatorRow(t, pool)
+
+	_, err := RegisterDeviceToken(t.Context(), pool, nil, operatorID, "fcm", "android", "some-token")
+	if !errors.Is(err, ErrDeviceTokenEncryptionKeyUnavailable) {
+		t.Fatalf("expected ErrDeviceTokenEncryptionKeyUnavailable, got %v", err)
 	}
 }
 

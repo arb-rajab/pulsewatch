@@ -79,7 +79,7 @@ func New(pool *pgxpool.Pool, cfg Config, logger *slog.Logger) (*Scheduler, error
 		ownerID:    owner,
 		jobs:       make(chan CheckJob, cfg.WorkerPoolSize),
 		logger:     logger,
-		dispatcher: alerting.NewDefaultDispatcher(pool, nil, emailCfg),
+		dispatcher: alerting.NewDefaultDispatcher(pool, nil, emailCfg, channelKey),
 		channelKey: channelKey,
 	}, nil
 }

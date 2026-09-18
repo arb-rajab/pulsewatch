@@ -98,6 +98,86 @@ func TestCreateAlertChannel_RejectsInvalidType(t *testing.T) {
 	}
 }
 
+// TestCreateAlertChannel_RejectsSSRFDestinations is T-08's creation-time
+// regression proof (06-security-threat-model.md): a webhook destination
+// naming a private/loopback/link-local address — including the cloud
+// instance-metadata address, 169.254.169.254, the specific high-value SSRF
+// target this guard exists to stop — is rejected with a useful 422 naming
+// the "destination" field, and never reaches alert_channels at all.
+func TestCreateAlertChannel_RejectsSSRFDestinations(t *testing.T) {
+	pool := testPool(t)
+	operatorID := insertTestOperator(t, pool, "test-channels-ssrf@example.invalid", "a-real-password")
+	cookie := realSessionCookie(t, operatorID)
+	r := testRouter(pool)
+
+	blocked := []string{
+		"http://127.0.0.1/hook",
+		"http://169.254.169.254/latest/meta-data/",
+		"http://10.0.0.5/hook",
+		"http://172.16.0.5/hook",
+		"http://192.168.1.5/hook",
+		"http://[::1]/hook",
+		"file:///etc/passwd",
+	}
+	for _, dest := range blocked {
+		t.Run(dest, func(t *testing.T) {
+			body := mustJSON(t, map[string]string{"type": "webhook", "destination": dest})
+			w := doRequest(t, r, http.MethodPost, "/api/v1/alert-channels", cookie, body)
+			if w.Code != http.StatusUnprocessableEntity {
+				t.Fatalf("expected 422 for %q, got %d: %s", dest, w.Code, w.Body.String())
+			}
+			var envelope errorEnvelope
+			if err := json.Unmarshal(w.Body.Bytes(), &envelope); err != nil {
+				t.Fatalf("decode error envelope: %v", err)
+			}
+			if envelope.Error.Field == nil || *envelope.Error.Field != "destination" {
+				t.Fatalf("expected the error to name field %q, got %+v", "destination", envelope.Error)
+			}
+		})
+	}
+
+	var count int
+	if err := pool.QueryRow(t.Context(), `SELECT count(*) FROM alert_channels WHERE type = 'webhook'`).Scan(&count); err != nil {
+		t.Fatalf("count alert_channels: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("expected no webhook channel to have been created, got %d", count)
+	}
+}
+
+// TestRotateAlertChannelSecret_RejectsSSRFDestinations proves the
+// dispatch-time-facing gap ADR-0006/T-08 leaves open if only creation is
+// checked: rotating an existing webhook channel's destination to a
+// private/internal address must be rejected exactly like creating one with
+// that destination in the first place.
+func TestRotateAlertChannelSecret_RejectsSSRFDestinations(t *testing.T) {
+	pool := testPool(t)
+	operatorID := insertTestOperator(t, pool, "test-channels-ssrf-rotate@example.invalid", "a-real-password")
+	cookie := realSessionCookie(t, operatorID)
+	r := testRouter(pool)
+
+	createBody := mustJSON(t, map[string]string{"type": "webhook", "destination": "https://hooks.invalid/rotate-ssrf-test"})
+	wCreate := doRequest(t, r, http.MethodPost, "/api/v1/alert-channels", cookie, createBody)
+	if wCreate.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", wCreate.Code, wCreate.Body.String())
+	}
+	var created alertChannelResponse
+	if err := json.Unmarshal(wCreate.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_, _ = pool.Exec(ctx, `DELETE FROM alert_channels WHERE id = $1::uuid`, created.ID)
+	})
+
+	rotateBody := mustJSON(t, map[string]string{"destination": "http://169.254.169.254/latest/meta-data/"})
+	w := doRequest(t, r, http.MethodPut, "/api/v1/alert-channels/"+created.ID+"/secret", cookie, rotateBody)
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
 // TestCreateAlertChannel_AcceptsAPushChannel proves ADR-0007's channel type
 // is genuinely creatable through the same operator API — and that a push
 // credential is treated exactly like any other channel secret on the way

@@ -259,6 +259,25 @@ concretely:
   nine migrations each only add a table, so none of them needed it) —
   that specific scenario is still open, tracked alongside the rest of
   B-009's narrowed remainder as B-013 (`11-backlog.md`).
+- **Migrations `000012`/`000013` (B-012, `device_tokens` encryption-at-rest)
+  are this project's first real expand/contract *pair*, not just a
+  single nullable-column add**, and they carry a real data-migration step
+  in between: `000012` only adds `token_encrypted`/`token_hash` (nullable);
+  `backend/cmd/encrypt-device-tokens` backfills them from the old plaintext
+  `token` column for any pre-existing row (application-level, since a SQL
+  migration file has no access to `ALERT_CHANNEL_ENCRYPTION_KEY`); `000013`
+  then enforces `NOT NULL`, moves the uniqueness constraint onto
+  `token_hash`, and drops `token`. Verified for real against a live local
+  Postgres 16 this session: `migrate up` through `000012`, a real plaintext
+  row inserted, the backfill command run against it, `migrate up` through
+  `000013` (the `NOT NULL` constraints apply cleanly against the now-backfilled
+  row), and a full `down -all` / `up` round trip — not exercised under a real
+  overlapping-pod rolling-update window (that remains B-013's open scope),
+  but the schema-and-backfill sequencing itself is real-Postgres-verified,
+  not just written to look right. A real deployment upgrading past this
+  pair must run `encrypt-device-tokens` between `000012` and `000013` — a
+  fresh database (nothing between `000011` and `000012`, e.g. this
+  project's own CI) has no plaintext rows and needs it not at all.
 
 ### Agent/server version compatibility during a rolling update
 
