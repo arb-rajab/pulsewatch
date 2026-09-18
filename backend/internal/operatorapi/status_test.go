@@ -26,9 +26,7 @@ func createTestTarget(t *testing.T, r *gin.Engine, pool *pgxpool.Pool, cookie, u
 	if err := json.Unmarshal(w.Body.Bytes(), &created); err != nil {
 		t.Fatalf("decode created target: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(t.Context(), `DELETE FROM targets WHERE id = $1::uuid`, created.ID)
-	})
+	t.Cleanup(func() { deleteTargetCascade(pool, created.ID) })
 	return created
 }
 
@@ -90,7 +88,7 @@ func TestGetTargetStatus_StaleAgentDisplaysUnknownWithoutMutatingRawState(t *tes
 	if err != nil {
 		t.Fatalf("create test agent: %v", err)
 	}
-	t.Cleanup(func() { _, _ = pool.Exec(t.Context(), `DELETE FROM agents WHERE id = $1::uuid`, agent.ID) })
+	deleteAgentCleanup(t, pool, agent.ID)
 
 	// A last_heartbeat_at far enough in the past to be stale under
 	// agentauth.IsStale's fixed 3x-report-interval rule (60s here, so
@@ -176,7 +174,7 @@ func TestGetTargetStatus_OpenIncidentSurfaced(t *testing.T) {
 	if err := pool.QueryRow(t.Context(), `INSERT INTO incidents (target_id, opened_at) VALUES ($1::uuid, now()) RETURNING id`, created.ID).Scan(&incidentID); err != nil {
 		t.Fatalf("insert test incident: %v", err)
 	}
-	t.Cleanup(func() { _, _ = pool.Exec(t.Context(), `DELETE FROM incidents WHERE id = $1`, incidentID) })
+	deleteIncidentCleanup(t, pool, incidentID)
 
 	w := doRequest(t, r, http.MethodGet, "/api/v1/targets/"+created.ID+"/status", cookie, nil)
 	if w.Code != http.StatusOK {

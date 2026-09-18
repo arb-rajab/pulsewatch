@@ -54,17 +54,36 @@ RETURNING id::text`).Scan(&targetID)
 		t.Fatalf("insert test target: %v", err)
 	}
 
-	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		// Best-effort: a target with incidents/check_results still
-		// referencing it (plain REFERENCES, no ON DELETE CASCADE) won't
-		// actually delete — same accepted looseness as
-		// scheduler.insertTestTarget's own cleanup.
-		_, _ = pool.Exec(ctx, `DELETE FROM targets WHERE id = $1::uuid`, targetID)
-	})
+	t.Cleanup(func() { deleteTargetCascade(pool, targetID) })
 
 	return targetID
+}
+
+// deleteTargetCascade removes a target and every row that a plain
+// REFERENCES-only child table (no ON DELETE CASCADE) still holds against
+// it, in dependency order, before deleting the target itself.
+//
+// Root cause of B-006 (this package's own contribution): a bare `DELETE
+// FROM targets` here silently failed (a foreign-key violation whose error
+// this fixture discarded via `_, _ =`) whenever a test called
+// OpenIncident/RecordCheckResult directly against the fixture target —
+// exactly what dispatch_test.go and incident_concurrency_test.go do —
+// leaving the target (and everything still pointing at it) orphaned in the
+// shared test Postgres instead of failing loudly, matching scheduler's own
+// identical fixture and internal/rollup.insertTestTarget's already-correct
+// child-first ordering. This was the "accepted looseness" the old comment
+// here named; it's no longer accepted, since the fix is no harder than
+// scheduler/agentapi's own version of the same helper. target_schedule
+// needs no explicit delete: it's the one child table with ON DELETE
+// CASCADE (see its own migration's comment).
+func deleteTargetCascade(pool *pgxpool.Pool, targetID string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, _ = pool.Exec(ctx, `DELETE FROM alert_dispatches WHERE incident_id IN (SELECT id FROM incidents WHERE target_id = $1::uuid)`, targetID)
+	_, _ = pool.Exec(ctx, `DELETE FROM incidents WHERE target_id = $1::uuid`, targetID)
+	_, _ = pool.Exec(ctx, `DELETE FROM check_results WHERE target_id = $1::uuid`, targetID)
+	_, _ = pool.Exec(ctx, `DELETE FROM check_rollups_hourly WHERE target_id = $1::uuid`, targetID)
+	_, _ = pool.Exec(ctx, `DELETE FROM targets WHERE id = $1::uuid`, targetID)
 }
 
 func countOpenIncidents(t *testing.T, pool *pgxpool.Pool, targetID string) int {

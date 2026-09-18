@@ -52,9 +52,7 @@ func TestCreateAgent_TokenWorksOnTheRealAgentFacingSurface(t *testing.T) {
 	if err := json.Unmarshal(wCreate.Body.Bytes(), &created); err != nil {
 		t.Fatalf("decode create response: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(t.Context(), `DELETE FROM agents WHERE id = $1::uuid`, created.ID)
-	})
+	deleteAgentCleanup(t, pool, created.ID)
 	if created.Token == "" {
 		t.Fatal("expected a plaintext token in the create response")
 	}
@@ -85,9 +83,7 @@ func TestAgents_ListGetDelete_ThroughRealGatedHTTP(t *testing.T) {
 	if err := json.Unmarshal(wCreate.Body.Bytes(), &created); err != nil {
 		t.Fatalf("decode create response: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(t.Context(), `DELETE FROM agents WHERE id = $1::uuid`, created.ID)
-	})
+	deleteAgentCleanup(t, pool, created.ID)
 	if created.ReportIntervalSeconds != defaultReportIntervalSeconds {
 		t.Fatalf("expected the default report_interval_seconds=%d, got %d", defaultReportIntervalSeconds, created.ReportIntervalSeconds)
 	}
@@ -138,9 +134,7 @@ func TestDeleteAgent_BlockedWhileTargetsAssigned(t *testing.T) {
 	if err := json.Unmarshal(wCreateAgent.Body.Bytes(), &agent); err != nil {
 		t.Fatalf("decode agent create response: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(t.Context(), `DELETE FROM agents WHERE id = $1::uuid`, agent.ID)
-	})
+	deleteAgentCleanup(t, pool, agent.ID)
 
 	wCreateTarget := doRequest(t, r, http.MethodPost, "/api/v1/targets", cookie,
 		[]byte(`{"type":"http","url":"http://example.invalid/409-target","interval_seconds":30,"timeout_seconds":5,"agent_id":"`+agent.ID+`"}`))
@@ -151,9 +145,7 @@ func TestDeleteAgent_BlockedWhileTargetsAssigned(t *testing.T) {
 	if err := json.Unmarshal(wCreateTarget.Body.Bytes(), &target); err != nil {
 		t.Fatalf("decode target create response: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(t.Context(), `DELETE FROM targets WHERE id = $1::uuid`, target.ID)
-	})
+	t.Cleanup(func() { deleteTargetCascade(pool, target.ID) })
 
 	wDeleteBlocked := doRequest(t, r, http.MethodDelete, "/api/v1/agents/"+agent.ID, cookie, nil)
 	if wDeleteBlocked.Code != http.StatusConflict {
@@ -190,9 +182,7 @@ func TestRotateAgentCredential_ThroughRealGatedHTTP(t *testing.T) {
 	if err := json.Unmarshal(wCreate.Body.Bytes(), &created); err != nil {
 		t.Fatalf("decode create response: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(t.Context(), `DELETE FROM agents WHERE id = $1::uuid`, created.ID)
-	})
+	deleteAgentCleanup(t, pool, created.ID)
 
 	wRotate := doRequest(t, r, http.MethodPost, "/api/v1/agents/"+created.ID+"/credential/rotate", cookie, nil)
 	if wRotate.Code != http.StatusOK {

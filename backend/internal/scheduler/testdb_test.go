@@ -85,13 +85,34 @@ VALUES ($1::uuid, $2, $3, $4)`,
 		t.Fatalf("insert test target_schedule: %v", err)
 	}
 
-	t.Cleanup(func() {
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_, _ = pool.Exec(cleanupCtx, `DELETE FROM targets WHERE id = $1::uuid`, targetID)
-	})
+	t.Cleanup(func() { deleteTargetCascade(pool, targetID) })
 
 	return targetID
+}
+
+// deleteTargetCascade removes a target and every row that a plain
+// REFERENCES-only child table (no ON DELETE CASCADE) still holds against
+// it, in dependency order, before deleting the target itself.
+//
+// Root cause of B-006: a bare `DELETE FROM targets` here silently failed
+// (a foreign-key violation whose error this fixture discards via `_, _ =`,
+// matching every other package's own convention) whenever the pipeline a
+// test actually exercised had opened an incident, dispatched an alert, or
+// recorded a check result against the fixture target in the meantime —
+// alert_lifecycle_test.go's tests do exactly that. The target row (and
+// everything still pointing at it) was then left orphaned in the shared
+// test Postgres instead of failing loudly, matching
+// internal/rollup.insertTestTarget's own already-correct child-first
+// ordering. target_schedule needs no explicit delete: it's the one child
+// table with ON DELETE CASCADE (see its own migration's comment).
+func deleteTargetCascade(pool *pgxpool.Pool, targetID string) {
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, _ = pool.Exec(cleanupCtx, `DELETE FROM alert_dispatches WHERE incident_id IN (SELECT id FROM incidents WHERE target_id = $1::uuid)`, targetID)
+	_, _ = pool.Exec(cleanupCtx, `DELETE FROM incidents WHERE target_id = $1::uuid`, targetID)
+	_, _ = pool.Exec(cleanupCtx, `DELETE FROM check_results WHERE target_id = $1::uuid`, targetID)
+	_, _ = pool.Exec(cleanupCtx, `DELETE FROM check_rollups_hourly WHERE target_id = $1::uuid`, targetID)
+	_, _ = pool.Exec(cleanupCtx, `DELETE FROM targets WHERE id = $1::uuid`, targetID)
 }
 
 func countCheckResults(t *testing.T, pool *pgxpool.Pool, targetID string) int {

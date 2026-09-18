@@ -105,10 +105,7 @@ FROM incidents WHERE target_id = $1::uuid`, targetID,
 }
 
 // insertTestAlertChannel creates a real alert_channels row encrypted with
-// testEncryptionKey. Cleanup is best-effort, matching insertTestTarget's own
-// accepted looseness (an alert_dispatches row referencing this channel
-// blocks the delete; harmless for test correctness, since every assertion
-// in this file scopes by this channel's own id).
+// testEncryptionKey.
 func insertTestAlertChannel(t *testing.T, pool *pgxpool.Pool, destination string) string {
 	t.Helper()
 	encrypted, err := alerting.EncryptDestination(destination, testEncryptionKey)
@@ -125,6 +122,13 @@ INSERT INTO alert_channels (type, destination_encrypted) VALUES ('webhook', $1) 
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
+		// alert_dispatches has a plain REFERENCES to alert_channels (no ON
+		// DELETE CASCADE), and this cleanup runs before insertTestTarget's own
+		// (t.Cleanup is LIFO, and this fixture is always called after
+		// insertTestTarget in this file's tests) — so a dispatch row this
+		// test's own alert lifecycle produced is still there when this closure
+		// runs. Delete it first, same B-006 fix as deleteTargetCascade.
+		_, _ = pool.Exec(ctx, `DELETE FROM alert_dispatches WHERE alert_channel_id = $1::uuid`, channelID)
 		_, _ = pool.Exec(ctx, `DELETE FROM alert_channels WHERE id = $1::uuid`, channelID)
 	})
 	return channelID
