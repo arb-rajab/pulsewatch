@@ -83,7 +83,8 @@ erDiagram
         uuid operator_id FK "ON DELETE CASCADE"
         text provider "fcm | apns"
         text platform "ios | android"
-        text token "provider-issued; never returned by any API"
+        text token_encrypted "AES-256-GCM ciphertext (B-012); provider-issued value never returned by any API"
+        text token_hash "HMAC-SHA256 blind index (B-012) — carries the exact-match upsert lookup the old plaintext column supported"
         timestamptz created_at
         timestamptz last_registered_at
         timestamptz last_delivered_at "nullable"
@@ -286,8 +287,12 @@ is "excluded," not "the dashboard must explain why":
   opened_at)` for incident-history queries (US-009, FR-022).
 - `agents`: unique index on credential identifier; lookups are always by
   `agent_id`, no additional index needed for staleness checks.
-- `device_tokens` (ADR-0007): unique `(provider, token)` — the key the
-  registration upsert conflicts on; **partial** index on `(provider) WHERE
+- `device_tokens` (ADR-0007, column shape updated B-012): unique
+  `(provider, token_hash)` — the key the registration upsert conflicts on
+  (`token_hash` is a deterministic HMAC-SHA256 blind index; the AES-256-GCM
+  `token_encrypted` column can't serve as a uniqueness key itself, since its
+  randomised nonce makes two encryptions of the same token look different);
+  **partial** index on `(provider) WHERE
   revoked_at IS NULL AND dead_at IS NULL`, which is the one query push
   dispatch runs on the hot path (every live token for one provider), with
   dead and revoked rows kept for operator visibility but never scanned
@@ -479,6 +484,16 @@ handoff for the full before/after evidence.
 
 ## Session 18 addendum: `device_tokens`, and why the token itself is not encrypted
 
+**Superseded by B-012 (2026-09-18) — see the addendum further below.** The
+reasoning in points 1–3 immediately below is kept verbatim as the
+historical record of the original decision; point 3's exact-match-upsert
+problem was real and was solved, not waived, once a later session gave it
+the same treatment `alert_channels` already had: a deterministic
+`token_hash` blind index alongside the AES-256-GCM `token_encrypted` column.
+Point 1 (a device token alone grants nothing without the provider
+credential) remains true and is why this was Low/Medium severity while
+open, not why it was left open.
+
 ADR-0007 adds `device_tokens` alongside `alert_channels` rather than
 extending it: a push channel holds one provider *credential*, and an
 operator's devices register themselves against it many-to-one, from a
@@ -506,3 +521,27 @@ oversight:
 It is nonetheless never readable back: `alerting.DeviceTokenRecord` — the
 one shape the operator API returns — has no field capable of carrying it,
 the same structural discipline `AlertChannel` applies to a destination.
+
+## B-012 addendum (2026-09-18): `device_tokens.token` is now encrypted at rest
+
+The Session 18 decision above turned out to be reversible without the
+trade-off it described, and a security-audit session (B-012,
+`06-security-threat-model.md`'s T-09) reversed it: `device_tokens.token`
+(plaintext) is replaced by two columns —
+
+- `token_encrypted`: AES-256-GCM ciphertext (`alerting.EncryptDestination`,
+  identical helper and key, `ALERT_CHANNEL_ENCRYPTION_KEY`, to
+  `alert_channels.destination_encrypted`), decrypted only inside
+  `PushDispatcher`'s fan-out.
+- `token_hash`: a deterministic HMAC-SHA256 (`alerting.HashDeviceToken`,
+  keyed by the same encryption key) — the exact-match lookup
+  `RegisterDeviceToken`'s `ON CONFLICT (provider, token_hash)` upsert needs,
+  which AES-GCM's randomised-nonce ciphertext structurally cannot provide.
+
+This is an expand/contract migration pair (`000012` adds the new columns
+nullable; `backend/cmd/encrypt-device-tokens` backfills any pre-existing
+plaintext row; `000013` enforces `NOT NULL`, moves the uniqueness
+constraint onto `token_hash`, and drops the old `token` column), not a
+single rewriting migration — see `08-deployment-and-operations.md`'s
+"Migrations during a rolling update" section for why, and for what was
+verified against a real Postgres this session.

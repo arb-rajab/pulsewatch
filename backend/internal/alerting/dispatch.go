@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"time"
 
@@ -112,6 +114,14 @@ type WebhookDispatcher struct {
 	// PerAttemptTimeout bounds a single HTTP round-trip. <= 0 means
 	// defaultPerAttemptTimeout.
 	PerAttemptTimeout time.Duration
+	// AllowPrivateNetworks disables the SSRF guard (ssrf.go) that otherwise
+	// blocks every dial to a loopback/private/link-local address, including
+	// retries. False (the guard is active) in every production construction
+	// (NewWebhookDispatcher). Test-only: this package's own tests dispatch
+	// to a real httptest.Server, which is a loopback address by construction
+	// — those tests set this true deliberately, to exercise real delivery
+	// rather than the guard this file adds.
+	AllowPrivateNetworks bool
 }
 
 // NewWebhookDispatcher constructs the real dispatcher with this package's
@@ -175,7 +185,7 @@ func backoffDelay(base, maxDelay time.Duration, n int) time.Duration {
 // produce is a fixed string or an HTTP status code, nothing derived from
 // the request itself.
 type webhookAttemptError struct {
-	kind       string // "malformed" | "transport" | "status"
+	kind       string // "malformed" | "blocked" | "transport" | "status"
 	statusCode int
 }
 
@@ -185,6 +195,8 @@ func (e *webhookAttemptError) Error() string {
 		return fmt.Sprintf("webhook POST returned status %d", e.statusCode)
 	case "malformed":
 		return "webhook destination is not a valid HTTP(S) URL"
+	case "blocked":
+		return "webhook destination refused by SSRF guard"
 	default:
 		return "webhook POST transport error"
 	}
@@ -192,12 +204,17 @@ func (e *webhookAttemptError) Error() string {
 
 // retryable reports whether another attempt could plausibly succeed. A
 // malformed destination never will (it's a configuration error, not a
-// transient one); a 4xx other than 429 means the receiver rejected this
-// request specifically and a byte-for-byte retry won't change that; every
-// other case (network failure, timeout, 429, 5xx) is worth retrying.
+// transient one); a destination the SSRF guard blocked is a configuration
+// problem in the same sense — retrying would just ask the guard the same
+// question again, not give a differently-resolving DNS answer any special
+// chance to matter, since the guard already re-resolves and re-validates on
+// every attempt regardless of whether this loop repeats; a 4xx other than
+// 429 means the receiver rejected this request specifically and a
+// byte-for-byte retry won't change that; every other case (network failure,
+// timeout, 429, 5xx) is worth retrying.
 func (e *webhookAttemptError) retryable() bool {
 	switch e.kind {
-	case "malformed":
+	case "malformed", "blocked":
 		return false
 	case "status":
 		return e.statusCode == http.StatusTooManyRequests || e.statusCode >= 500
@@ -266,6 +283,12 @@ func (d *WebhookDispatcher) Dispatch(ctx context.Context, channel Channel, req D
 // *webhookAttemptError — never a raw net/http error, which for a bad URL
 // can embed the URL itself (the channel's secret destination, FR-023) in
 // its own Error() string.
+//
+// Unless AllowPrivateNetworks is set, the actual TCP dial for this attempt
+// goes through guardedDialContext (ssrf.go) — a fresh resolve-and-validate
+// on every single call, this one included, which is what makes the SSRF
+// guard effective against DNS rebinding rather than just a one-time check
+// this destination happened to pass back at channel-creation time.
 func (d *WebhookDispatcher) attemptOnce(ctx context.Context, destination string, payload []byte) *webhookAttemptError {
 	attemptCtx, cancel := context.WithTimeout(ctx, d.perAttemptTimeout())
 	defer cancel()
@@ -276,8 +299,11 @@ func (d *WebhookDispatcher) attemptOnce(ctx context.Context, destination string,
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 
-	resp, err := d.Client.Do(httpReq)
+	resp, err := d.guardedClient().Do(httpReq)
 	if err != nil {
+		if errors.Is(err, ErrWebhookDestinationBlocked) {
+			return &webhookAttemptError{kind: "blocked"}
+		}
 		return &webhookAttemptError{kind: "transport"}
 	}
 	defer func() { _ = resp.Body.Close() }()
@@ -287,6 +313,35 @@ func (d *WebhookDispatcher) attemptOnce(ctx context.Context, destination string,
 		return &webhookAttemptError{kind: "status", statusCode: resp.StatusCode}
 	}
 	return nil
+}
+
+// guardedClient returns the *http.Client this attempt should use: d.Client
+// unchanged when AllowPrivateNetworks is set (test-only, see that field's
+// doc comment), otherwise a shallow copy whose Transport dials through
+// guardedDialContext. Built fresh per attempt deliberately — webhook dispatch
+// is triggered by an incident opening or resolving, not a hot path, and a
+// fresh copy means this can't be defeated by a caller mutating d.Client's
+// Transport after construction.
+func (d *WebhookDispatcher) guardedClient() *http.Client {
+	client := d.Client
+	if client == nil {
+		client = &http.Client{}
+	}
+	if d.AllowPrivateNetworks {
+		return client
+	}
+
+	var base *http.Transport
+	if custom, ok := client.Transport.(*http.Transport); ok && custom != nil {
+		base = custom.Clone()
+	} else {
+		base = http.DefaultTransport.(*http.Transport).Clone()
+	}
+	base.DialContext = guardedDialContext(&net.Dialer{Timeout: d.perAttemptTimeout()})
+
+	guarded := *client
+	guarded.Transport = base
+	return &guarded
 }
 
 // NotifyChannels loads every configured channel, hands the request to

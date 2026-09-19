@@ -112,12 +112,12 @@ func run() error {
 		slog.Warn("SMTP relay not configured; agent-reported email alert dispatch will be skipped if any alert_channels row exists", "error", emailErr)
 		emailCfg = emailprovider.Config{}
 	}
-	dispatcher := alerting.NewDefaultDispatcher(pool, nil, emailCfg)
 	channelKey, keyErr := alerting.EncryptionKeyFromEnv()
 	if keyErr != nil {
 		slog.Warn("ALERT_CHANNEL_ENCRYPTION_KEY not configured; agent-reported alert dispatch will be skipped if any alert_channels row exists", "error", keyErr)
 		channelKey = nil
 	}
+	dispatcher := alerting.NewDefaultDispatcher(pool, nil, emailCfg, channelKey)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()

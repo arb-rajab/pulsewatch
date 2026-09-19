@@ -45,7 +45,7 @@ func RegisterRoutes(r *gin.Engine, pool *pgxpool.Pool, sessionSecret []byte, cha
 	// (pulsewatch-mobile), authenticated with the same operator session the
 	// dashboard uses — there is no second identity type here, per
 	// 05-api-contracts.md's "only ever two disjoint identity types".
-	api.POST("/device-tokens", auth, csrf, RegisterDeviceToken(pool))
+	api.POST("/device-tokens", auth, csrf, RegisterDeviceToken(pool, channelKey))
 	api.GET("/device-tokens", auth, ListDeviceTokens(pool))
 	api.DELETE("/device-tokens/:device_token_id", auth, UnregisterDeviceToken(pool))
 

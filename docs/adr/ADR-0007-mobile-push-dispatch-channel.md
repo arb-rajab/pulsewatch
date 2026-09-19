@@ -136,6 +136,17 @@ middleware's own comment argued against.
 
 ### 6. What is and isn't a secret here
 
+**Reversed by a later security-audit session (B-012, 2026-09-18) — see
+`06-security-threat-model.md`'s T-09 and migrations 000012/000013. The
+exact-match-upsert problem this section identifies is real and was the
+actual reason encryption was deferred, not a pretext; that session solved it
+instead of re-accepting it, with a deterministic HMAC-SHA256 blind index
+(`device_tokens.token_hash`) carrying the lookup RegisterDeviceToken's
+upsert needs, alongside the AES-256-GCM ciphertext
+(`device_tokens.token_encrypted`) for actual storage. The rest of this
+section is kept verbatim as the historical record of that original
+decision and its reasoning, not as the current behavior.**
+
 `alert_channels.destination_encrypted` (the provider credential) is
 AES-256-GCM encrypted at rest, unchanged from FR-023. `device_tokens.token`
 is **not**, deliberately:

@@ -58,11 +58,15 @@ func NewChannelRouter(byType map[string]Dispatcher) *ChannelRouter {
 // failure here, the same way a nil channelKey elsewhere in this package
 // isn't: EmailDispatcher.Dispatch reports an honest unconfirmed outcome for
 // any "email" channel rather than this constructor panicking or refusing to
-// start a process that has no email channel configured yet.
-func NewDefaultDispatcher(pool *pgxpool.Pool, client *http.Client, emailCfg emailprovider.Config) *ChannelRouter {
+// start a process that has no email channel configured yet. channelKey is
+// ALERT_CHANNEL_ENCRYPTION_KEY, handed to PushDispatcher too — it decrypts
+// device_tokens.token_encrypted with the identical key that decrypts
+// alert_channels.destination_encrypted (see devicetokens.go's own comment
+// for why this session reuses rather than mints a second key).
+func NewDefaultDispatcher(pool *pgxpool.Pool, client *http.Client, emailCfg emailprovider.Config, channelKey []byte) *ChannelRouter {
 	return NewChannelRouter(map[string]Dispatcher{
 		"webhook": NewWebhookDispatcher(client),
-		"push":    NewPushDispatcher(pool, client),
+		"push":    NewPushDispatcher(pool, client, channelKey),
 		"email":   NewEmailDispatcher(emailCfg),
 	})
 }

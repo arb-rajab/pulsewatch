@@ -36,6 +36,13 @@ type PushDispatcher struct {
 	// Client is handed to the provider clients. Tests point it at a local
 	// server speaking the real FCM/APNs protocols; production leaves it nil.
 	Client *http.Client
+	// Key decrypts device_tokens.token_encrypted (loadLiveDeviceTokens) —
+	// the same ALERT_CHANNEL_ENCRYPTION_KEY alert_channels' destination
+	// already uses. A nil Key makes every dispatch to a channel with any
+	// live device token an honest unconfirmed outcome (loadLiveDeviceTokens
+	// errors loudly rather than silently skipping decryption), the same
+	// fail-safe LoadChannels already gives a missing key for alert_channels.
+	Key []byte
 	// MaxAttempts is the total number of provider attempts per device token
 	// (including the first), applied only to transient failures. <= 0 means
 	// defaultMaxAttempts (3, ADR-0006's value, unchanged here).
@@ -53,9 +60,9 @@ type PushDispatcher struct {
 }
 
 // NewPushDispatcher constructs the real push dispatcher with this package's
-// default retry policy.
-func NewPushDispatcher(pool *pgxpool.Pool, client *http.Client) *PushDispatcher {
-	return &PushDispatcher{Pool: pool, Client: client}
+// default retry policy. key decrypts device_tokens.token_encrypted.
+func NewPushDispatcher(pool *pgxpool.Pool, client *http.Client, key []byte) *PushDispatcher {
+	return &PushDispatcher{Pool: pool, Client: client, Key: key}
 }
 
 func (d *PushDispatcher) maxAttempts() int {
@@ -167,7 +174,7 @@ func (d *PushDispatcher) Dispatch(ctx context.Context, channel Channel, req Disp
 		return DispatchOutcome{Confirmed: false, Attempts: 0, LastError: "push channel credential unusable: " + err.Error()}
 	}
 
-	tokens, err := loadLiveDeviceTokens(ctx, d.Pool, client.Provider())
+	tokens, err := loadLiveDeviceTokens(ctx, d.Pool, d.Key, client.Provider())
 	if err != nil {
 		return DispatchOutcome{Confirmed: false, Attempts: 0, LastError: "could not load device tokens for push channel"}
 	}
