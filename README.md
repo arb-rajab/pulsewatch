@@ -1,9 +1,11 @@
 # pulsewatch
 
-> **Status:** 🚧 Session 4 complete — environment, schema, and CI baseline.
-> No monitoring logic, agent code, or alerting exists yet. See
-> [`docs/project-memory/12-session-handoff.md`](docs/project-memory/12-session-handoff.md)
-> for current state and next steps.
+> **Status:** 🚧 Session 22 complete — full incident lifecycle, three alert dispatch
+> channels (webhook, push, email), device-list dashboard, Kubernetes deployment
+> verified against real infrastructure, and agent-initiated monitoring.
+> See [`docs/project-memory/12-session-handoff.md`](docs/project-memory/12-session-handoff.md)
+> for current state and roadmap. Two items are permanently blocked or descoped
+> (see Constraints below).
 
 A self-hosted uptime, SLO, and alerting service with a lightweight agent —
 for teams who want real observability into whether their infrastructure is
@@ -28,10 +30,24 @@ Stack: Go 1.25 (Gin) · SvelteKit · PostgreSQL · Redis.
 
 ## Project status
 
-This repository is built through a session-based workflow. Current phase:
-**Session 4 (Environment, Repository Setup, Standards, and CI Baseline) —
-complete.** Next: Session 5 (feature implementation, starting with the
-scheduler/leasing mechanism).
+This repository is built through a session-based workflow. **Current phase:
+Session 22 (Backlog Cleanup — test-fixture ordering and security/testing
+documentation).** Previous sessions completed:
+
+- **Sessions 5–7:** Scheduler with Postgres leasing (restart-safe, no duplicates),
+  alert dispatch state machine, agent-initiated monitoring.
+- **Session 8:** Operator authentication and CRUD endpoints (targets, channels, agents).
+- **Session 9:** First dashboard screen and real target status endpoint.
+- **Sessions 10–22:** TLS termination, real webhook/email/push dispatch, mobile-push
+  device management, device-list dashboard, Kubernetes deployment (real-cluster
+  verified), agent stale-detection overlay, and security/testing documentation.
+
+**Two explicitly out-of-scope blockers:**
+- **B-013:** Terraform apply + cert-manager real-cloud verification (sandbox
+  egress-blocked — requires external cloud account).
+- **B-016:** Real FCM/APNs delivery with live provider credentials (permanently
+  descoped by design — no public CI can hold production credentials; both
+  protocols implemented and mock-verified, never delivered to real devices).
 
 Full portfolio context: this is a flagship repository in a broader
 public/private software portfolio. See `docs/project-memory/` for the
@@ -54,9 +70,10 @@ OTel Collector, the backend, and the frontend.
 - OTel Collector health: `http://localhost:13143/`
 
 See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the full setup and migration
-workflow. This currently boots the real schema and infrastructure with no
-monitoring, agent, or alerting business logic yet — that begins with
-Session 5.
+workflow. This boots the real schema with a complete incident-detection and
+alerting pipeline: automated check execution via an embedded scheduler, alert
+dispatch to webhooks/email/mobile-push, and an agent-initiated remote-monitoring
+path for private infrastructure.
 
 ## Documentation
 
