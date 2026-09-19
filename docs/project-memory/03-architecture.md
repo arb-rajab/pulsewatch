@@ -41,7 +41,7 @@ C4Container
     Container_Boundary(server_host, "pulsewatch server host") {
         Container(spa, "Dashboard", "SvelteKit", "Target list, uptime%, incident history — US-009")
         Container(api, "Server", "Go 1.25 / Gin", "REST API, scheduler + worker pool (ADR-0004), alert-state machine (ADR-0002), OTLP ingestion endpoint")
-        Container(collector, "OTel Collector", "otelcol-contrib", "Receives agent OTLP telemetry; exporter pipeline forwards to the server's ingestion endpoint (ADR-0003) — planned addition to docker-compose.yml, not yet wired (Session 4)")
+        Container(collector, "OTel Collector", "otelcol-contrib", "Receives agent OTLP telemetry; exporter pipeline forwards to the server's ingestion endpoint (ADR-0003)")
         ContainerDb(pg, "PostgreSQL", "Plain Postgres 16, no TimescaleDB", "targets, target_schedule, check_results (partitioned), check_rollups_hourly, incidents, agents — 04-data-model.md")
         ContainerDb(redis, "Redis", "Cache", "Not load-bearing for scheduling/leasing (ADR-0001) — available for future use (e.g. dashboard read caching), not required by any FR/NFR this session")
     }
