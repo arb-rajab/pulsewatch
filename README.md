@@ -80,6 +80,11 @@ path for private infrastructure.
 - [`docs/project-memory/`](docs/project-memory/) — brief, requirements,
   architecture, security, testing, operations, decisions, risks, backlog,
   handoff, release notes, maintenance/retirement plan
+- [`docs/adr/`](docs/adr/) — architecture decision records, including
+  [`ADR-0009`](docs/adr/ADR-0009-serverless-otlp-normalizer.md) (a
+  serverless AWS Lambda function, [`serverless/otlp-normalizer/`](serverless/otlp-normalizer/),
+  as a third, additive deployment target for stateless OTLP payload
+  validation — alongside, not instead of, the Kubernetes-deployed backend)
 - [`SECURITY.md`](SECURITY.md) — vulnerability disclosure policy
 
 ## Non-goals

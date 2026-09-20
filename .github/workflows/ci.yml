@@ -185,6 +185,48 @@ jobs:
           deploy/k8s/overlays/production
           > /dev/null
 
+  # ADR-0009 (Session 20): the serverless deployment target is a separate Go
+  # module (serverless/otlp-normalizer/go.mod), so it needs its own build/
+  # test step — `go build ./...`/`go test ./...` run from backend/ never
+  # touch it. No AWS credentials or container runtime are needed: `sam
+  # build` compiles the real deployable artifact via the module's own
+  # Makefile, and `sam validate` checks template.yaml structurally. Neither
+  # requires `sam local invoke`, whose container-image pull this ADR
+  # documents as unavailable outside a normal, unrestricted developer
+  # machine.
+  serverless-otlp-normalizer:
+    name: Serverless (otlp-normalizer) build, tests, SAM validate
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: serverless/otlp-normalizer
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache-dependency-path: serverless/otlp-normalizer/go.sum
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test
+        run: go test ./... -race -v
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install AWS SAM CLI
+        run: pip install aws-sam-cli
+
+      - name: sam build
+        run: sam build
+
+      - name: sam validate --lint
+        run: sam validate --lint
+
   # Builds and pushes real, pullable images for deploy/k8s/rollout.sh to
   # deploy — 08-deployment-and-operations.md's own Compose section already
   # names "no CD pipeline publishes images anywhere yet" as a real, named
