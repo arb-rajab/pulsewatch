@@ -1,0 +1,13 @@
+{
+  "version": "2.0",
+  "routeKey": "POST /normalize",
+  "rawPath": "/normalize",
+  "requestContext": {
+    "http": {
+      "method": "POST",
+      "path": "/normalize"
+    }
+  },
+  "isBase64Encoded": false,
+  "body": "{\"logRecords\":[{\"timeUnixNano\":\"1735689600000000000\",\"attributes\":[{\"key\":\"pulsewatch.event_type\",\"value\":{\"stringValue\":\"heartbeat\"}}]},{\"timeUnixNano\":\"1735689601000000000\",\"attributes\":[{\"key\":\"pulsewatch.event_type\",\"value\":{\"stringValue\":\"check_result\"}},{\"key\":\"pulsewatch.target_id\",\"value\":{\"stringValue\":\"11111111-1111-1111-1111-111111111111\"}},{\"key\":\"pulsewatch.outcome\",\"value\":{\"stringValue\":\"failure\"}},{\"key\":\"pulsewatch.latency_ms\",\"value\":{\"intValue\":\"342\"}},{\"key\":\"pulsewatch.status_code\",\"value\":{\"intValue\":\"503\"}},{\"key\":\"pulsewatch.failure_reason\",\"value\":{\"stringValue\":\"connection refused\"}}]}]}"
+}

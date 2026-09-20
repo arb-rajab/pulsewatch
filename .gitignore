@@ -38,6 +38,10 @@ docker-compose.override.yml
 crash.log
 crash.*.log
 
+# AWS SAM (serverless/otlp-normalizer — ADR-0009)
+.aws-sam/
+samconfig.toml
+
 # IDE / local tooling
 .claude/
 .vscode/

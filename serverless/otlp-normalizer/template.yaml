@@ -1,0 +1,37 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  pulsewatch otlp-normalizer: a standalone, stateless serverless function
+  that validates and normalizes the same simplified OTLP/HTTP+JSON
+  check_result/heartbeat payload shape the always-on backend accepts at
+  POST /v1/logs (see docs/adr/ADR-0009-serverless-otlp-normalizer.md). It
+  has no database and no dispatcher — normalize-only, additive to the
+  existing K8s-deployed backend, never a replacement for it.
+
+Globals:
+  Function:
+    Timeout: 5
+    MemorySize: 128
+
+Resources:
+  NormalizerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: .
+      Handler: bootstrap
+      Runtime: provided.al2023
+      Architectures:
+        - x86_64
+      Events:
+        Normalize:
+          Type: HttpApi
+          Properties:
+            Path: /normalize
+            Method: post
+    Metadata:
+      BuildMethod: makefile
+
+Outputs:
+  NormalizeApiUrl:
+    Description: Invoke URL for the /normalize endpoint
+    Value: !Sub "https://${ServerlessHttpApi}.execute-api.${AWS::Region}.amazonaws.com/normalize"
