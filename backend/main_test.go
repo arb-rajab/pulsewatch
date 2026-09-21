@@ -6,12 +6,14 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+
+	"github.com/arb-rajab/pulsewatch/backend/internal/livefeed"
 )
 
 func TestOperatorRouterHealthReturns200OK(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	// /health doesn't touch Postgres, so a nil pool/key is safe here.
-	router := setupOperatorRouter(nil, nil, nil)
+	router := setupOperatorRouter(nil, nil, nil, livefeed.NewHub())
 
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, "/health", nil)
@@ -32,7 +34,7 @@ func TestAgentRouterHealthReturns200OK(t *testing.T) {
 	// /health doesn't touch Postgres or the agentapi routes, so a nil pool
 	// and nil dispatcher/key are safe here — they'd only matter if this
 	// test actually invoked an agentapi route.
-	router := setupAgentRouter(nil, nil, nil, nil)
+	router := setupAgentRouter(nil, nil, nil, nil, livefeed.NewHub())
 
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, "/health", nil)
@@ -55,7 +57,7 @@ func TestAgentRouterHealthReturns200OK(t *testing.T) {
 // a real handler again.
 func TestOperatorRouterHasNoAgentRoutes(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	router := setupOperatorRouter(nil, nil, nil)
+	router := setupOperatorRouter(nil, nil, nil, livefeed.NewHub())
 
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/agent/assignments", nil)
@@ -70,7 +72,7 @@ func TestOperatorRouterHasNoAgentRoutes(t *testing.T) {
 // router must never carry an operatorapi route.
 func TestAgentRouterHasNoOperatorRoutes(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	router := setupAgentRouter(nil, nil, nil, nil)
+	router := setupAgentRouter(nil, nil, nil, nil, livefeed.NewHub())
 
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/targets", nil)

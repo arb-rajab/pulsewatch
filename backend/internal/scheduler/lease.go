@@ -59,14 +59,18 @@ RETURNING target_id::text`
 // and re-runs the check from the last successfully committed streak/state,
 // which is what ADR-0001 and ADR-0002 both already require independently.
 //
-// The returned *alerting.DispatchRequest is non-nil only when the
-// commit above actually succeeded and the incidents write inside it
-// returned a row — the caller (Scheduler.handleJob) dispatches
-// notifications only then, never speculatively before commit.
-func releaseAndRecord(ctx context.Context, pool *pgxpool.Pool, job CheckJob, checkedAt time.Time, outcome checkOutcome) (*alerting.DispatchRequest, error) {
+// The returned alerting.Recorded.Dispatch is non-nil only when the commit
+// above actually succeeded and the incidents write inside it returned a
+// row — the caller (Scheduler.handleJob) dispatches notifications only
+// then, never speculatively before commit. The full Recorded value (not
+// just Dispatch) is returned so handleJob's own ADR-0010 live-push
+// publish — an additive read of the same commit, not a second write path —
+// has the State/Streak/Inserted a dashboard event needs without this
+// function performing a second query for them.
+func releaseAndRecord(ctx context.Context, pool *pgxpool.Pool, job CheckJob, checkedAt time.Time, outcome checkOutcome) (alerting.Recorded, error) {
 	tx, err := pool.Begin(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("begin release transaction for target %s: %w", job.TargetID, err)
+		return alerting.Recorded{}, fmt.Errorf("begin release transaction for target %s: %w", job.TargetID, err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }() // no-op once committed
 
@@ -86,7 +90,7 @@ func releaseAndRecord(ctx context.Context, pool *pgxpool.Pool, job CheckJob, che
 		BodyMatchFragmentTruncated: outcome.bodyMatchFragmentTruncated,
 	}, job.FailureThreshold)
 	if recordErr != nil {
-		return nil, fmt.Errorf("record check result for target %s: %w", job.TargetID, recordErr)
+		return alerting.Recorded{}, fmt.Errorf("record check result for target %s: %w", job.TargetID, recordErr)
 	}
 
 	// next_due_at/lease clearing are this path's own scheduling-specific
@@ -107,11 +111,11 @@ SET next_due_at = now() + ($1 * INTERVAL '1 second'),
 WHERE target_id = $4::uuid`
 
 	if _, execErr := tx.Exec(ctx, updateSchedule, job.IntervalSeconds, recorded.Streak, string(recorded.State), job.TargetID); execErr != nil {
-		return nil, fmt.Errorf("release lease for target %s: %w", job.TargetID, execErr)
+		return alerting.Recorded{}, fmt.Errorf("release lease for target %s: %w", job.TargetID, execErr)
 	}
 
 	if commitErr := tx.Commit(ctx); commitErr != nil {
-		return nil, fmt.Errorf("commit release transaction for target %s: %w", job.TargetID, commitErr)
+		return alerting.Recorded{}, fmt.Errorf("commit release transaction for target %s: %w", job.TargetID, commitErr)
 	}
-	return recorded.Dispatch, nil
+	return recorded, nil
 }

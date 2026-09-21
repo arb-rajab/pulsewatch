@@ -11,6 +11,7 @@ import (
 
 	"github.com/arb-rajab/pulsewatch/backend/internal/agentapi"
 	"github.com/arb-rajab/pulsewatch/backend/internal/alerting"
+	"github.com/arb-rajab/pulsewatch/backend/internal/livefeed"
 )
 
 type discardWriter struct{}
@@ -28,7 +29,7 @@ func nopLogger() *slog.Logger {
 func agentSurfaceRouter(pool *pgxpool.Pool) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	agentapi.RegisterRoutes(r, pool, alerting.NewWebhookDispatcher(nil), testEncryptionKey, nopLogger())
+	agentapi.RegisterRoutes(r, pool, alerting.NewWebhookDispatcher(nil), testEncryptionKey, nopLogger(), livefeed.NewHub())
 	return r
 }
 
