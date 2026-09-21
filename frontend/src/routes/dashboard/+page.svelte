@@ -1,8 +1,47 @@
 <script lang="ts">
+	import { onDestroy, onMount } from 'svelte';
 	import { resolve } from '$app/paths';
 	import type { PageProps } from './$types';
+	import { connectLiveEvents, type LiveEvent } from '$lib/liveEvents';
+	import type { TargetStatusResponse } from './+page.server';
 
 	let { data }: PageProps = $props();
+
+	// rows is this page's own live-mutable copy of data.rows (ADR-0010): the
+	// SSR load stays the initial-load/fallback path, unmodified — this
+	// writable $derived is what live-push events reassign in place so a
+	// connected dashboard reflects a real state change without a manual
+	// refresh, while still resetting to data.rows whenever a fresh `data`
+	// arrives (e.g. a real navigation), so a live-mutated row never
+	// survives past the load it came from.
+	let rows = $derived(data.rows);
+
+	let liveStatus = $state<'connected' | 'reconnecting'>('reconnecting');
+
+	async function refetchTargetStatus(targetID: string) {
+		const res = await fetch(`${resolve('/dashboard/status/[target_id]', { target_id: targetID })}`);
+		if (!res.ok) return; // a transient refetch failure just leaves the row as-is until the next event or navigation
+		const status = (await res.json()) as TargetStatusResponse;
+		rows = rows.map((row) =>
+			row.target.id === targetID ? { ...row, status, statusError: null } : row
+		);
+	}
+
+	function handleLiveEvent(event: LiveEvent) {
+		// Both event kinds (target_status, incident) mean the same thing to
+		// this page: this target's status may have changed, go re-read the
+		// real, authoritative computation (display_state's agent-staleness
+		// overlay included) rather than trying to derive it from the smaller
+		// event payload — see status/[target_id]/+server.ts's own doc comment.
+		void refetchTargetStatus(event.target_id);
+	}
+
+	onMount(() => {
+		const handle = connectLiveEvents(handleLiveEvent, (status) => {
+			liveStatus = status;
+		});
+		onDestroy(handle.close);
+	});
 
 	const stateLabel: Record<string, string> = {
 		healthy: 'Healthy',
@@ -11,11 +50,11 @@
 		unknown: 'Unknown (agent stale)'
 	};
 
-	function targetName(target: (typeof data.rows)[number]['target']): string {
+	function targetName(target: (typeof rows)[number]['target']): string {
 		return target.url ?? `${target.host}:${target.port}`;
 	}
 
-	function formatUptime(slo: (typeof data.rows)[number]['slo']): string {
+	function formatUptime(slo: (typeof rows)[number]['slo']): string {
 		if (!slo) return '—';
 		// A window with zero observed success-or-failure checks (e.g. a
 		// target created within the last window_days) reports 100.0 as a
@@ -35,6 +74,9 @@
 	<header>
 		<h1>pulsewatch</h1>
 		<nav>
+			<span class="live-indicator live-{liveStatus}" title="Live updates: {liveStatus}">
+				● {liveStatus === 'connected' ? 'Live' : 'Reconnecting…'}
+			</span>
 			<a href={resolve('/dashboard/devices')}>Devices</a>
 			<form method="POST" action="?/logout">
 				<button type="submit">Log out</button>
@@ -46,7 +88,7 @@
 		<p class="error">{data.loadError}</p>
 	{/if}
 
-	{#if data.rows.length === 0 && !data.loadError}
+	{#if rows.length === 0 && !data.loadError}
 		<p>No targets registered yet.</p>
 	{:else}
 		<table>
@@ -55,11 +97,11 @@
 					<th>Target</th>
 					<th>Status</th>
 					<th>Last checked</th>
-					<th>Uptime ({data.rows[0]?.slo?.window_days ?? 30}d)</th>
+					<th>Uptime ({rows[0]?.slo?.window_days ?? 30}d)</th>
 				</tr>
 			</thead>
 			<tbody>
-				{#each data.rows as row (row.target.id)}
+				{#each rows as row (row.target.id)}
 					<tr>
 						<td>{targetName(row.target)}</td>
 						<td>
@@ -138,5 +180,15 @@
 	}
 	.error {
 		color: #cf222e;
+	}
+	.live-indicator {
+		font-size: 0.8rem;
+		font-weight: 600;
+	}
+	.live-connected {
+		color: #1a7f37;
+	}
+	.live-reconnecting {
+		color: #9a6700;
 	}
 </style>

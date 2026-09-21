@@ -17,6 +17,7 @@ import (
 
 	"github.com/arb-rajab/pulsewatch/backend/internal/agentauth"
 	"github.com/arb-rajab/pulsewatch/backend/internal/alerting"
+	"github.com/arb-rajab/pulsewatch/backend/internal/livefeed"
 )
 
 type partialSuccess struct {
@@ -41,7 +42,7 @@ type exportLogsServiceResponse struct {
 // server-executed check — via recordAgentCheckResult (record.go). There is
 // no second, agent-specific alert-evaluation path anywhere in this
 // function.
-func IngestLogs(pool *pgxpool.Pool, dispatcher alerting.Dispatcher, channelKey []byte, logger *slog.Logger) gin.HandlerFunc {
+func IngestLogs(pool *pgxpool.Pool, dispatcher alerting.Dispatcher, channelKey []byte, logger *slog.Logger, hub *livefeed.Hub) gin.HandlerFunc {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -80,7 +81,7 @@ func IngestLogs(pool *pgxpool.Pool, dispatcher alerting.Dispatcher, channelKey [
 
 			for _, sl := range rl.ScopeLogs {
 				for _, rec := range sl.LogRecords {
-					if err := processLogRecord(ctx, pool, dispatcher, channelKey, logger, identity, rec); err != nil {
+					if err := processLogRecord(ctx, pool, dispatcher, channelKey, logger, hub, identity, rec); err != nil {
 						if isInfraError(err) {
 							logger.Error("otlp ingestion: infrastructure error", "error", err, "agent_id", identity.AgentID)
 							writeError(c, http.StatusServiceUnavailable, "database_unavailable", "could not persist check result")
@@ -121,7 +122,7 @@ func infraErr(msg string) error      { return &recordError{msg: msg, infra: true
 
 // processLogRecord handles one logRecord — heartbeat or check_result — per
 // docs/architecture/openapi.yaml's /v1/logs description.
-func processLogRecord(ctx context.Context, pool *pgxpool.Pool, dispatcher alerting.Dispatcher, channelKey []byte, logger *slog.Logger, identity agentauth.Identity, rec OtlpLogRecord) error {
+func processLogRecord(ctx context.Context, pool *pgxpool.Pool, dispatcher alerting.Dispatcher, channelKey []byte, logger *slog.Logger, hub *livefeed.Hub, identity agentauth.Identity, rec OtlpLogRecord) error {
 	nanos, err := strconv.ParseInt(rec.TimeUnixNano, 10, 64)
 	if err != nil {
 		return validationErr("timeUnixNano is not a valid integer")
@@ -142,14 +143,14 @@ func processLogRecord(ctx context.Context, pool *pgxpool.Pool, dispatcher alerti
 		return nil
 
 	case EventTypeCheckResult:
-		return processCheckResult(ctx, pool, dispatcher, channelKey, logger, identity, checkedAt, attrs)
+		return processCheckResult(ctx, pool, dispatcher, channelKey, logger, hub, identity, checkedAt, attrs)
 
 	default:
 		return validationErr("unknown pulsewatch.event_type")
 	}
 }
 
-func processCheckResult(ctx context.Context, pool *pgxpool.Pool, dispatcher alerting.Dispatcher, channelKey []byte, logger *slog.Logger, identity agentauth.Identity, checkedAt time.Time, attrs map[string]OtlpValue) error {
+func processCheckResult(ctx context.Context, pool *pgxpool.Pool, dispatcher alerting.Dispatcher, channelKey []byte, logger *slog.Logger, hub *livefeed.Hub, identity agentauth.Identity, checkedAt time.Time, attrs map[string]OtlpValue) error {
 	targetID, ok := attrs[AttrTargetID].asString()
 	if !ok {
 		return validationErr("missing pulsewatch.target_id")
@@ -212,6 +213,12 @@ func processCheckResult(ctx context.Context, pool *pgxpool.Pool, dispatcher aler
 
 	if recorded.Dispatch != nil {
 		alerting.NotifyChannels(ctx, pool, dispatcher, channelKey, *recorded.Dispatch, logger)
+	}
+	// ADR-0010: publish after the same commit recordAgentCheckResult already
+	// made, using the identical Recorded value NotifyChannels' gate above
+	// just read — no second detection path for agent-reported results.
+	if recorded.Inserted {
+		livefeed.PublishRecorded(hub, targetID, recorded)
 	}
 	return nil
 }

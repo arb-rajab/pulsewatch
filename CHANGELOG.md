@@ -7,6 +7,20 @@ versioning follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- Live dashboard push over Server-Sent Events (ADR-0010): `GET /api/v1/events`
+  streams real `target_status` and `incident` (opened/resolved) events to
+  connected operator sessions, sourced from the exact same write path
+  (`alerting.RecordCheckResult`/`OpenIncident`/`CloseIncident`) that already
+  drives webhook/push/email dispatch — no parallel detection mechanism. The
+  scheduler's own release path and the agent-facing OTLP ingestion path both
+  publish to one in-process `internal/livefeed.Hub`. The dashboard
+  (`/dashboard`) proxies the stream through its own `/dashboard/events`
+  route (browser `EventSource` never talks to the backend directly, same
+  pattern as every other session-cookie-gated call) and re-fetches a
+  target's real status on each event; a capped exponential backoff
+  reconnects the client-side stream after a network blip. Existing
+  SSR-load-based fetching is unchanged and remains the initial-load/
+  fallback path.
 - Device list dashboard (B-017): `/dashboard/devices` shows an operator's
   registered devices (platform, registered date, last delivery,
   active/dead/revoked status) with a manual revoke action against

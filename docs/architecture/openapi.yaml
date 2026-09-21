@@ -32,6 +32,12 @@ tags:
     description: Agent registration and credential lifecycle — ADR-0003, roles matrix.
   - name: agent-surface
     description: Endpoints called by the agent itself, bearer-token authenticated — ADR-0003.
+  - name: live-push
+    description: >
+      Server-Sent Events stream of real target-status/incident transitions
+      — ADR-0010. Additive to `status`: the dashboard's existing
+      per-target GET calls remain the initial-load/fallback path this
+      stream supplements for an already-open session, never a replacement.
 
 paths:
   /auth/login:
@@ -266,6 +272,36 @@ paths:
                 items: { $ref: '#/components/schemas/Incident' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+
+  /events:
+    get:
+      operationId: streamLiveEvents
+      tags: [live-push]
+      summary: Live target-status/incident event stream (ADR-0010)
+      description: >
+        Server-Sent Events (`text/event-stream`), held open indefinitely.
+        Two event names ever occur, matching this schema's `Event`
+        discriminated shape exactly: `target_status` after every real
+        (non-duplicate) recorded check result, and `incident` only when
+        the guarded incidents write actually opened or resolved one — the
+        identical gate that already triggers `alert_dispatches` (ADR-0002).
+        A comment-only `: ping` frame is sent periodically to keep the
+        connection alive through intermediaries; it carries no event name
+        and clients should ignore it. Reconnection is a client
+        responsibility — the browser's native `EventSource` reconnects on
+        its own, and pulsewatch's own dashboard additionally layers a
+        capped exponential backoff on top of it (ADR-0010 Consequences).
+      security: [{ operatorSession: [] }]
+      responses:
+        '200':
+          description: >
+            OK. The body is an open `text/event-stream`, not a single JSON
+            response — this schema documents the shape of each event's
+            `data:` payload, not an HTTP response envelope.
+          content:
+            text/event-stream:
+              schema: { $ref: '#/components/schemas/Event' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
 
   /alert-channels:
     post:
@@ -833,6 +869,23 @@ components:
         opened_at: { type: string, format: date-time }
         closed_at: { type: [string, 'null'], format: date-time }
         status: { type: string, enum: [open, resolved] }
+
+    Event:
+      type: object
+      description: >
+        One `/events` SSE frame's `data:` payload (ADR-0010). `state`/
+        `streak` are populated on `type: target_status`; `incident_id`/
+        `kind` are populated on `type: incident`; each is absent (omitted,
+        not null) on the other type.
+      required: [type, target_id, occurred_at]
+      properties:
+        type: { type: string, enum: [target_status, incident] }
+        target_id: { type: string, format: uuid }
+        occurred_at: { type: string, format: date-time }
+        state: { type: string, enum: [healthy, suspect, alerting] }
+        streak: { type: integer }
+        incident_id: { type: integer }
+        kind: { type: string, enum: [opened, resolved] }
 
     AlertChannelCreateRequest:
       type: object

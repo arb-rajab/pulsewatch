@@ -11,6 +11,7 @@ import (
 
 	"github.com/arb-rajab/pulsewatch/backend/internal/alerting"
 	"github.com/arb-rajab/pulsewatch/backend/internal/emailprovider"
+	"github.com/arb-rajab/pulsewatch/backend/internal/livefeed"
 )
 
 // dbOpTimeout bounds the claim/release Postgres round-trips themselves —
@@ -42,6 +43,11 @@ type Scheduler struct {
 	// production reality; no channel-registration API exists yet). See
 	// alerting.LoadChannels.
 	channelKey []byte
+	// publisher is ADR-0010's live-push fan-out point. nil (the zero value)
+	// is a valid, fully-functional state — every publish call site guards
+	// on it being set, so a Scheduler built without SetPublisher behaves
+	// exactly as it did before ADR-0010, dispatch and persistence unchanged.
+	publisher *livefeed.Hub
 }
 
 // New constructs a Scheduler against the given pool. It starts no
@@ -95,6 +101,15 @@ func (s *Scheduler) OwnerID() string { return s.ownerID }
 // notification provider would call this too.
 func (s *Scheduler) SetDispatcher(d alerting.Dispatcher) {
 	s.dispatcher = d
+}
+
+// SetPublisher wires ADR-0010's live-push Hub: after every real (non-
+// duplicate) recorded check result, handleJob publishes the resulting
+// target status — and, on a threshold-crossing edge, the incident event —
+// to it. Optional: an unset publisher (the default) means this Scheduler
+// simply publishes nothing, identical to its pre-ADR-0010 behavior.
+func (s *Scheduler) SetPublisher(hub *livefeed.Hub) {
+	s.publisher = hub
 }
 
 // Run starts the worker pool and the tick loop, and blocks until ctx is
@@ -244,7 +259,7 @@ func (s *Scheduler) handleJob(drainCtx context.Context, job CheckJob) {
 	checkCancel()
 
 	releaseCtx, releaseCancel := context.WithTimeout(drainCtx, dbOpTimeout)
-	dispatchReq, err := releaseAndRecord(releaseCtx, s.pool, job, checkedAt, outcome)
+	recorded, err := releaseAndRecord(releaseCtx, s.pool, job, checkedAt, outcome)
 	releaseCancel()
 	if err != nil {
 		s.logger.Error("release failed", "target_id", job.TargetID, "error", err)
@@ -252,11 +267,18 @@ func (s *Scheduler) handleJob(drainCtx context.Context, job CheckJob) {
 	}
 
 	// ADR-0002 Consequences: dispatch is triggered only after the
-	// conditional incidents write actually returned a row — dispatchReq is
-	// nil on every other tick (no state change, or a Suspect-zone blip).
-	if dispatchReq != nil {
+	// conditional incidents write actually returned a row — recorded.Dispatch
+	// is nil on every other tick (no state change, or a Suspect-zone blip).
+	if recorded.Dispatch != nil {
 		dispatchCtx, dispatchCancel := context.WithTimeout(drainCtx, dispatchTimeout)
-		alerting.NotifyChannels(dispatchCtx, s.pool, s.dispatcher, s.channelKey, *dispatchReq, s.logger)
+		alerting.NotifyChannels(dispatchCtx, s.pool, s.dispatcher, s.channelKey, *recorded.Dispatch, s.logger)
 		dispatchCancel()
+	}
+
+	// ADR-0010: publish after the same commit releaseAndRecord already made
+	// (and, for the incident event, the identical gate NotifyChannels above
+	// just used) — never a separate detection path.
+	if s.publisher != nil && recorded.Inserted {
+		livefeed.PublishRecorded(s.publisher, job.TargetID, recorded)
 	}
 }

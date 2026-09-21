@@ -16,6 +16,7 @@ import (
 
 	"github.com/arb-rajab/pulsewatch/backend/internal/agentauth"
 	"github.com/arb-rajab/pulsewatch/backend/internal/alerting"
+	"github.com/arb-rajab/pulsewatch/backend/internal/livefeed"
 )
 
 // defaultTestDatabaseURL mirrors every other package's own test convention
@@ -48,9 +49,16 @@ func testPool(t *testing.T) *pgxpool.Pool {
 }
 
 func testRouter(pool *pgxpool.Pool, dispatcher alerting.Dispatcher, channelKey []byte) *gin.Engine {
+	return testRouterWithHub(pool, dispatcher, channelKey, livefeed.NewHub())
+}
+
+// testRouterWithHub is testRouter with a caller-supplied Hub, for tests
+// (livepush_test.go) that need to Publish/Subscribe against the exact Hub
+// this router's IngestLogs handler publishes through.
+func testRouterWithHub(pool *pgxpool.Pool, dispatcher alerting.Dispatcher, channelKey []byte, hub *livefeed.Hub) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	RegisterRoutes(r, pool, dispatcher, channelKey, nopLogger())
+	RegisterRoutes(r, pool, dispatcher, channelKey, nopLogger(), hub)
 	return r
 }
 

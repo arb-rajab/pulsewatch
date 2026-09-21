@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/arb-rajab/pulsewatch/backend/internal/agentauth"
+	"github.com/arb-rajab/pulsewatch/backend/internal/livefeed"
 	"github.com/arb-rajab/pulsewatch/backend/internal/operatorauth"
 )
 
@@ -60,9 +61,16 @@ var testEncryptionKey = []byte{
 var testSessionSecret = []byte("test-only-fixed-32-byte-secret-k")
 
 func testRouter(pool *pgxpool.Pool) *gin.Engine {
+	return testRouterWithHub(pool, livefeed.NewHub())
+}
+
+// testRouterWithHub is testRouter with a caller-supplied Hub, for tests
+// (events_test.go) that need to Publish against the exact Hub a router's
+// GET /events route is subscribed through.
+func testRouterWithHub(pool *pgxpool.Pool, hub *livefeed.Hub) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	RegisterRoutes(r, pool, testSessionSecret, testEncryptionKey)
+	RegisterRoutes(r, pool, testSessionSecret, testEncryptionKey, hub)
 	return r
 }
 

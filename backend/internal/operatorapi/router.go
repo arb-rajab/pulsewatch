@@ -8,6 +8,8 @@ package operatorapi
 import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/arb-rajab/pulsewatch/backend/internal/livefeed"
 )
 
 // RegisterRoutes wires the full operator-facing surface onto r under
@@ -15,8 +17,12 @@ import (
 // operatorauth's HMAC signing key (operatorauth.SigningSecretFromEnv);
 // channelKey is FR-023's alert-channel encryption key (may be nil — see
 // CreateAlertChannel/RotateAlertChannelSecret, which fail closed with a 503
-// rather than silently storing plaintext when it's unset).
-func RegisterRoutes(r *gin.Engine, pool *pgxpool.Pool, sessionSecret []byte, channelKey []byte) {
+// rather than silently storing plaintext when it's unset). hub is
+// ADR-0010's live-push fan-out point for GET /events — the same Hub the
+// scheduler and agentapi ingestion path publish real state changes to.
+// Required, unlike channelKey: livefeed.NewHub() has no environment
+// precondition to fail, so there is no equivalent "unset" case to tolerate.
+func RegisterRoutes(r *gin.Engine, pool *pgxpool.Pool, sessionSecret []byte, channelKey []byte, hub *livefeed.Hub) {
 	limiter := newLoginRateLimiter(loginFailureLimit, loginRateWindow)
 	csrf := RequireJSONContentType()
 	auth := RequireOperator(sessionSecret)
@@ -34,6 +40,7 @@ func RegisterRoutes(r *gin.Engine, pool *pgxpool.Pool, sessionSecret []byte, cha
 	api.GET("/targets/:target_id/status", auth, GetTargetStatus(pool))
 	api.GET("/targets/:target_id/slo", auth, GetTargetSlo(pool))
 	api.GET("/targets/:target_id/incidents", auth, GetTargetIncidents(pool))
+	api.GET("/events", auth, StreamEvents(hub))
 
 	api.POST("/alert-channels", auth, csrf, CreateAlertChannel(pool, channelKey))
 	api.GET("/alert-channels", auth, ListAlertChannels(pool))

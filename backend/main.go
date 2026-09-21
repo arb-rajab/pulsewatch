@@ -18,6 +18,7 @@ import (
 	"github.com/arb-rajab/pulsewatch/backend/internal/agentapi"
 	"github.com/arb-rajab/pulsewatch/backend/internal/alerting"
 	"github.com/arb-rajab/pulsewatch/backend/internal/emailprovider"
+	"github.com/arb-rajab/pulsewatch/backend/internal/livefeed"
 	"github.com/arb-rajab/pulsewatch/backend/internal/operatorapi"
 	"github.com/arb-rajab/pulsewatch/backend/internal/operatorauth"
 	"github.com/arb-rajab/pulsewatch/backend/internal/rollup"
@@ -36,10 +37,10 @@ import (
 // regardless of what a client sends. pool may be nil only for tests that
 // exercise /health alone; an operatorapi route registered against a nil
 // pool will fail if actually invoked, never at registration time.
-func setupOperatorRouter(pool *pgxpool.Pool, sessionSecret []byte, channelKey []byte) *gin.Engine {
+func setupOperatorRouter(pool *pgxpool.Pool, sessionSecret []byte, channelKey []byte, hub *livefeed.Hub) *gin.Engine {
 	r := gin.Default()
 	r.GET("/health", healthHandler)
-	operatorapi.RegisterRoutes(r, pool, sessionSecret, channelKey)
+	operatorapi.RegisterRoutes(r, pool, sessionSecret, channelKey, hub)
 	return r
 }
 
@@ -50,11 +51,14 @@ func setupOperatorRouter(pool *pgxpool.Pool, sessionSecret []byte, channelKey []
 // R-003) for agent bearer-token traffic. No operatorapi route is ever
 // mounted on this engine — there is no server-side path where an operator
 // session cookie is meaningful here, not merely one where it happens to be
-// rejected.
-func setupAgentRouter(pool *pgxpool.Pool, dispatcher alerting.Dispatcher, channelKey []byte, logger *slog.Logger) *gin.Engine {
+// rejected. hub is ADR-0010's live-push fan-out point: agent-reported check
+// results (processCheckResult) publish to the identical Hub the operator
+// engine's GET /events streams from, in-process — the two engines are two
+// goroutines in the same pulsewatch binary, not two separate deployments.
+func setupAgentRouter(pool *pgxpool.Pool, dispatcher alerting.Dispatcher, channelKey []byte, logger *slog.Logger, hub *livefeed.Hub) *gin.Engine {
 	r := gin.Default()
 	r.GET("/health", healthHandler)
-	agentapi.RegisterRoutes(r, pool, dispatcher, channelKey, logger)
+	agentapi.RegisterRoutes(r, pool, dispatcher, channelKey, logger, hub)
 	return r
 }
 
@@ -90,10 +94,18 @@ func run() error {
 	}
 	defer pool.Close()
 
+	// hub is ADR-0010's single in-process live-push fan-out point, shared by
+	// both the scheduler's own release path and the agent-facing OTLP
+	// ingestion path below — the same "one construction every entry point
+	// uses" discipline alerting.NewDefaultDispatcher already established for
+	// the dispatcher.
+	hub := livefeed.NewHub()
+
 	sched, err := scheduler.New(pool, schedCfg, slog.Default())
 	if err != nil {
 		return fmt.Errorf("construct scheduler: %w", err)
 	}
+	sched.SetPublisher(hub)
 
 	rollupCfg := rollup.DefaultConfig()
 
@@ -134,8 +146,8 @@ func run() error {
 	// engine, not merely because the cookie fails some check on the way in.
 	const operatorAddr = ":8080"
 	const agentAddr = ":8081"
-	operatorSrv := &http.Server{Addr: operatorAddr, Handler: setupOperatorRouter(pool, sessionSecret, channelKey)}
-	agentSrv := &http.Server{Addr: agentAddr, Handler: setupAgentRouter(pool, dispatcher, channelKey, slog.Default())}
+	operatorSrv := &http.Server{Addr: operatorAddr, Handler: setupOperatorRouter(pool, sessionSecret, channelKey, hub)}
+	agentSrv := &http.Server{Addr: agentAddr, Handler: setupAgentRouter(pool, dispatcher, channelKey, slog.Default(), hub)}
 
 	httpErrCh := make(chan error, 2)
 	go func() {

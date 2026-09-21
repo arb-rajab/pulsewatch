@@ -11,7 +11,14 @@ export default tseslint.config(
 	{
 		languageOptions: {
 			globals: {
-				console: 'readonly'
+				console: 'readonly',
+				// fetch is used from browser-side component code (ADR-0010's
+				// live-push dashboard re-fetch) — everywhere else in this repo
+				// it's SvelteKit's own injected `fetch` load-function
+				// parameter, which typescript-eslint's typed linting already
+				// resolves without this; plain global browser `fetch` in a
+				// .svelte <script> block needs it listed explicitly.
+				fetch: 'readonly'
 			}
 		}
 	},
