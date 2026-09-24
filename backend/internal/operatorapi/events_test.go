@@ -109,3 +109,57 @@ func TestStreamEvents_RejectsMissingSession(t *testing.T) {
 		t.Fatalf("expected 401 with no session cookie, got %d", w.Code)
 	}
 }
+
+// TestStreamEvents_CapsConcurrentConnectionsPerOperator proves the
+// sseConnLimiter wired into StreamEvents actually refuses a real operator's
+// (sseConnsPerOperator+1)th concurrent stream rather than letting a single
+// authenticated session open unbounded connections against the process —
+// the gap this session's cap closes. Every request here is a genuine held-
+// open net/http.Client connection through a real httptest.Server, not a
+// buffering ResponseRecorder, since the limiter only matters while a
+// connection is actually still open.
+func TestStreamEvents_CapsConcurrentConnectionsPerOperator(t *testing.T) {
+	pool := testPool(t)
+	operatorID := insertTestOperator(t, pool, "test-events-cap@example.invalid", "a-real-password")
+	cookie := realSessionCookie(t, operatorID)
+
+	r := testRouterWithHub(pool, livefeed.NewHub())
+	srv := httptest.NewServer(r)
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	open := func() *http.Response {
+		t.Helper()
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+"/api/v1/events", nil)
+		if err != nil {
+			t.Fatalf("build request: %v", err)
+		}
+		req.Header.Set("Cookie", fmt.Sprintf("%s=%s", "pulsewatch_session", cookie))
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("open SSE stream: %v", err)
+		}
+		return resp
+	}
+
+	// Open exactly the allowed number of concurrent streams and keep them
+	// open for the rest of the test — closing any of them would free a slot
+	// and defeat the point of this test.
+	for i := 0; i < sseConnsPerOperator; i++ {
+		resp := open()
+		defer func() { _ = resp.Body.Close() }()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("stream %d: expected 200 opening the SSE stream, got %d", i, resp.StatusCode)
+		}
+	}
+
+	// The next stream from the same operator, while all sseConnsPerOperator
+	// slots are still held, must be refused.
+	resp := open()
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("expected 429 once the per-operator cap is reached, got %d", resp.StatusCode)
+	}
+}
