@@ -24,6 +24,7 @@ import (
 // precondition to fail, so there is no equivalent "unset" case to tolerate.
 func RegisterRoutes(r *gin.Engine, pool *pgxpool.Pool, sessionSecret []byte, channelKey []byte, hub *livefeed.Hub) {
 	limiter := newLoginRateLimiter(loginFailureLimit, loginRateWindow)
+	sseLimiter := newSSEConnLimiter(sseConnsPerOperator, sseConnsGlobal)
 	csrf := RequireJSONContentType()
 	auth := RequireOperator(sessionSecret)
 
@@ -40,7 +41,7 @@ func RegisterRoutes(r *gin.Engine, pool *pgxpool.Pool, sessionSecret []byte, cha
 	api.GET("/targets/:target_id/status", auth, GetTargetStatus(pool))
 	api.GET("/targets/:target_id/slo", auth, GetTargetSlo(pool))
 	api.GET("/targets/:target_id/incidents", auth, GetTargetIncidents(pool))
-	api.GET("/events", auth, StreamEvents(hub))
+	api.GET("/events", auth, StreamEvents(hub, sseLimiter))
 
 	api.POST("/alert-channels", auth, csrf, CreateAlertChannel(pool, channelKey))
 	api.GET("/alert-channels", auth, ListAlertChannels(pool))

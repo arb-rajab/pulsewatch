@@ -29,8 +29,23 @@ const heartbeatInterval = 20 * time.Second
 // This handler never decides what counts as a state change; it only
 // formats and relays whatever hub.Publish already received from the real
 // write path (scheduler.releaseAndRecord, agentapi.recordAgentCheckResult).
-func StreamEvents(hub *livefeed.Hub) gin.HandlerFunc {
+//
+// limiter caps concurrent streams per operator and globally (sseConnLimiter)
+// so that RequireOperator's session-cookie auth alone can't be used to open
+// unbounded long-lived connections against this process.
+func StreamEvents(hub *livefeed.Hub, limiter *sseConnLimiter) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		operatorID, ok := OperatorIDFrom(c)
+		if !ok {
+			c.AbortWithStatus(http.StatusUnauthorized)
+			return
+		}
+		if !limiter.acquire(operatorID) {
+			c.AbortWithStatus(http.StatusTooManyRequests)
+			return
+		}
+		defer limiter.release(operatorID)
+
 		events, unsubscribe := hub.Subscribe()
 		defer unsubscribe()
 
