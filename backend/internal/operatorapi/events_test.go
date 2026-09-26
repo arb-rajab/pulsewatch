@@ -211,7 +211,8 @@ func TestStreamEvents_StalledConnectionIsClosedAndSlotFreed(t *testing.T) {
 	hub := livefeed.NewHub()
 	r := testRouterWithHub(pool, hub)
 
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	var lc net.ListenConfig
+	ln, err := lc.Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
@@ -219,7 +220,8 @@ func TestStreamEvents_StalledConnectionIsClosedAndSlotFreed(t *testing.T) {
 	srv.Start()
 	defer srv.Close()
 
-	conn, err := net.Dial("tcp", ln.Addr().String())
+	var d net.Dialer
+	conn, err := d.DialContext(t.Context(), "tcp", ln.Addr().String())
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
@@ -228,7 +230,7 @@ func TestStreamEvents_StalledConnectionIsClosedAndSlotFreed(t *testing.T) {
 		_ = tc.SetReadBuffer(1)
 	}
 
-	req, err := http.NewRequest(http.MethodGet, "/api/v1/events", nil)
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/events", nil)
 	if err != nil {
 		t.Fatalf("build request: %v", err)
 	}
@@ -246,6 +248,7 @@ func TestStreamEvents_StalledConnectionIsClosedAndSlotFreed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read response: %v", err)
 	}
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200 opening the SSE stream, got %d", resp.StatusCode)
 	}
