@@ -27,6 +27,17 @@ updates:
     groups:
       minor-and-patch:
         update-types: ["minor", "patch"]
+    ignore:
+      # SvelteKit 3 is a migration, not a bump: svelte.config.js and the $lib
+      # alias are gone, tsconfig must extend $app/tsconfig, and it peers
+      # typescript ^6 (so TypeScript 7 cannot be installed either). adapter-node 6
+      # peers kit 3, so the two move together. Do this as a deliberate PR.
+      - dependency-name: "@sveltejs/kit"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@sveltejs/adapter-node"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
   # Backend Dockerfile base image
   - package-ecosystem: docker
     directory: "/backend"
@@ -54,6 +65,14 @@ updates:
     groups:
       minor-and-patch:
         update-types: ["minor", "patch"]
+    ignore:
+      # Provider majors (kubernetes 3.x, helm 3.x) change resource schemas; CI only
+      # runs `terraform fmt` and an offline kustomize build, so it cannot show they
+      # are safe. Upgrade deliberately with a real `terraform plan`.
+      - dependency-name: "hashicorp/kubernetes"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "hashicorp/helm"
+        update-types: ["version-update:semver-major"]
   # Actions used in .github/workflows
   - package-ecosystem: github-actions
     directory: "/"
