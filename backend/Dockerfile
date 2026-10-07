@@ -1,4 +1,4 @@
-FROM golang:1.25-alpine AS build
+FROM golang:1.27-alpine AS build
 
 WORKDIR /app
 
@@ -8,7 +8,7 @@ RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 go build -o pulsewatch .
 
-FROM alpine:3.20
+FROM alpine:3.24
 
 RUN adduser -D -u 10001 appuser
 COPY --from=build /app/pulsewatch /usr/local/bin/pulsewatch
