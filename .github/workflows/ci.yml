@@ -71,7 +71,13 @@ jobs:
           DATABASE_URL: postgres://pulsewatch:pulsewatch@localhost:5432/pulsewatch?sslmode=disable
         run: go test ./... -race -v -p 1
 
+      # govulncheck@latest can require a newer Go than go-version above.
+      # setup-go v6+ sets GOTOOLCHAIN=local, which blocks the automatic
+      # toolchain download and fails with "requires go >= 1.26.0"; "auto"
+      # restores the setup-go v5 behaviour for this step only.
       - name: govulncheck
+        env:
+          GOTOOLCHAIN: auto
         run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 
       - name: Run migrations against a fresh Postgres, verify down reverses cleanly, re-apply up
