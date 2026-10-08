@@ -36,7 +36,9 @@ jobs:
 
       - uses: actions/setup-go@v7
         with:
-          go-version: "1.26"
+          # Exact patch: the runner cache lagged at 1.26.8, which govulncheck flags
+          # (stdlib advisories fixed in 1.26.9). Raise this on each Go security release.
+          go-version: "1.26.9"
           cache-dependency-path: backend/go.sum
 
       - name: go vet
@@ -233,7 +235,9 @@ jobs:
 
       - uses: actions/setup-go@v7
         with:
-          go-version: "1.26"
+          # Exact patch: the runner cache lagged at 1.26.8, which govulncheck flags
+          # (stdlib advisories fixed in 1.26.9). Raise this on each Go security release.
+          go-version: "1.26.9"
           cache-dependency-path: serverless/otlp-normalizer/go.sum
 
       - name: go vet
