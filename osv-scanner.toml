@@ -1,0 +1,20 @@
+# osv-scanner configuration for the "Dependency vulnerability scan" CI job
+# (.github/workflows/ci.yml).
+#
+# Every entry here is a dated exception, not a permanent suppression: once
+# `ignoreUntil` passes, the finding fails the scan again and a human has to
+# either renew the entry (re-confirming the reason still holds) or delete it
+# (because a fix shipped). Entries are by advisory ID, so any NEW advisory
+# against the same package still fails the scan.
+
+[[IgnoredVulns]]
+id = "GO-2026-5932"
+ignoreUntil = 2026-11-15
+reason = """
+golang.org/x/crypto/openpgp is unmaintained and unsafe by design. The advisory is
+module-wide with no fixed version (every x/crypto release is listed as affected), so
+there is nothing to upgrade to. This repo imports only golang.org/x/crypto/bcrypt
+(backend), never the openpgp package, and the CI govulncheck step (symbol-level
+reachability) passes. Re-check before the expiry date: renew if still unfixed
+upstream, remove this entry the moment a patched release ships.
+"""
