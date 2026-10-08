@@ -82,3 +82,17 @@ updates:
     groups:
       minor-and-patch:
         update-types: ["minor", "patch"]
+  # Service images pinned in docker-compose*.yml
+  - package-ecosystem: "docker-compose"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      minor-and-patch:
+        update-types: ["minor", "patch"]
+    ignore:
+      # Major bumps of stateful services (databases, brokers, search) need a
+      # deliberate data-migration plan, not a drive-by version bump.
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
