@@ -28,7 +28,7 @@ services:
       retries: 10
 
   migrate:
-    image: migrate/migrate:v4.19.1
+    image: migrate/migrate:v4.20.1
     depends_on:
       postgres:
         condition: service_healthy
@@ -41,7 +41,7 @@ services:
     restart: "no"
 
   otel-collector:
-    image: otel/opentelemetry-collector-contrib:0.159.0
+    image: otel/opentelemetry-collector-contrib:0.161.0-386
     restart: unless-stopped
     volumes:
       - ./otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml:ro
