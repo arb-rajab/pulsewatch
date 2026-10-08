@@ -16,7 +16,7 @@ _Last updated: 2026-10-08. Maintained during the Dependabot clean-up pass; updat
 
 ## Time-limited exemptions
 
-- `osv-scanner.toml` (proposed, awaiting owner approval): `golang.org/x/crypto` v0.57.0 (GO-2026-5932, the unmaintained `openpgp` package; not imported here, only `bcrypt` is), `ignoreUntil` 2026-11-15.
+- `osv-scanner.toml` (approved by the repo owner 2026-10-08, merged in #50): `golang.org/x/crypto` v0.57.0 (GO-2026-5932, the unmaintained `openpgp` package; not imported here, only `bcrypt` is), `ignoreUntil` 2026-11-15.
 
 ## Notes
 
