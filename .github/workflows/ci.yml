@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [main]
 
+# Least privilege for the GITHUB_TOKEN; jobs that need more declare it themselves.
+permissions:
+  contents: read
+
 jobs:
   backend:
     name: Backend (lint, vet, tests, vuln scan, migrations)
