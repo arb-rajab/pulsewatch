@@ -23,6 +23,7 @@ _Last updated: 2026-10-08. Maintained during the Dependabot clean-up pass; updat
 
 - The Go toolchain in CI is pinned via `setup-go` with go.mod requiring Go 1.26; govulncheck runs with `GOTOOLCHAIN: auto`.
 - A `dependency-scan` (osv-scanner) job in `ci.yml` gates both Go modules and the frontend lockfile, including dev dependencies that `npm audit --omit=dev` skips and that `govulncheck` does not report.
+- `golang.org/x/net` 0.58.0 -> 0.60.0 in `backend/go.mod` (2026-10-08, indirect): five advisories published that day (GO-2026-6603, GO-2026-6610, GO-2026-6611, GO-2026-6612, GO-2026-6617) failed `dependency-scan` and the backend job on PR #54. Fixed by the module bump; `go build`, `go vet` and `go test ./...` pass locally.
 - Every workflow declares a top-level `permissions: contents: read` (added 2026-10-08, rescan cycle 3). Jobs that need more, such as CodeQL's `security-events: write`, declare it at job level.
 - Merge policy (deliberate choice by the repo owner, 2026-10-08): every PR, major-version dependency bumps included, is merged as soon as all of its required checks are green, confirmed per PR. This repo is a code showcase with no business or sensitive dependency, so green checks are the only gate. Red, pending or conflicted PRs are fixed or closed instead.
 
