@@ -40,6 +40,7 @@ _Last updated: 2026-10-09. Maintained during the Dependabot clean-up pass; updat
 
 ## Deferred (not re-raised each pass)
 
+- Getting alert reads past the session proxy was tested on 2026-10-09 and does not work; do not repeat it. With the Claude app removed from privacy-forge, the proxy still sent the app's token (`Resource not accessible by integration`). In a plain claude.ai chat with no repo attached, the proxy sent the owner's own GitHub login even when no token was given, refused every repo not attached to that session ("not enabled for this session"), and blocked secret-scanning alerts, Actions settings, webhooks, deploy keys, collaborators and environments by path. The owner's PAT never reached GitHub. The app was re-added to privacy-forge the same day (protection and `security_and_analysis` unchanged on read-back). Alert reads and Actions-path reads stay with the owner's Termux hand-off.
 - Ignored major versions are listed in `.github/dependabot.yml` with the reason for each.
 - Re-check exemptions before their `effectiveUntil` date (2026-11-15) and drop them once upstream fixes ship.
 - Alerts read 2026-10-09 with the repo owner's PAT, run on their machine (Claude sessions still get 403: the proxy sends a GitHub App token instead of `GH_ALERTS_TOKEN`, even a PAT passed explicitly). No open Dependabot or code-scanning alerts. Re-read 2026-10-09 after rescan cycle 2: still no open alerts.
