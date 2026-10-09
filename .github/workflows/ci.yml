@@ -14,6 +14,7 @@ jobs:
   backend:
     name: Backend (lint, vet, tests, vuln scan, migrations)
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: backend
@@ -97,6 +98,7 @@ jobs:
   frontend:
     name: Frontend (lint, build, tests)
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: frontend
@@ -127,6 +129,7 @@ jobs:
   otel-collector-config:
     name: OTel Collector config validation
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
 
@@ -140,6 +143,7 @@ jobs:
   gitleaks:
     name: Secret scanning (gitleaks)
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
         with:
@@ -155,6 +159,7 @@ jobs:
   dependency-scan:
     name: Dependency vulnerability scan (osv-scanner)
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
       - name: Run osv-scanner
@@ -169,6 +174,7 @@ jobs:
   codeql:
     name: CodeQL
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     permissions:
       security-events: write
     strategy:
@@ -198,6 +204,7 @@ jobs:
   iac-and-k8s-manifests-validate:
     name: Terraform fmt + Kubernetes manifest build (offline)
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
 
@@ -227,6 +234,7 @@ jobs:
   serverless-otlp-normalizer:
     name: Serverless (otlp-normalizer) build, tests, SAM validate
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: serverless/otlp-normalizer
@@ -268,6 +276,7 @@ jobs:
   publish-images:
     name: Publish backend/frontend images to GHCR
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     needs: [backend, frontend]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     permissions:
