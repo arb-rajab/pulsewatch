@@ -13,7 +13,7 @@ permissions:
 jobs:
   backend:
     name: Backend (lint, vet, tests, vuln scan, migrations)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: backend
@@ -96,7 +96,7 @@ jobs:
 
   frontend:
     name: Frontend (lint, build, tests)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: frontend
@@ -126,7 +126,7 @@ jobs:
 
   otel-collector-config:
     name: OTel Collector config validation
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
 
@@ -139,7 +139,7 @@ jobs:
 
   gitleaks:
     name: Secret scanning (gitleaks)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
         with:
@@ -154,7 +154,7 @@ jobs:
   # dated, in osv-scanner.toml.
   dependency-scan:
     name: Dependency vulnerability scan (osv-scanner)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - name: Run osv-scanner
@@ -168,7 +168,7 @@ jobs:
 
   codeql:
     name: CodeQL
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       security-events: write
     strategy:
@@ -197,7 +197,7 @@ jobs:
   # 11-backlog.md) — this job catches syntax/structural regressions only.
   iac-and-k8s-manifests-validate:
     name: Terraform fmt + Kubernetes manifest build (offline)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
 
@@ -226,7 +226,7 @@ jobs:
   # machine.
   serverless-otlp-normalizer:
     name: Serverless (otlp-normalizer) build, tests, SAM validate
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: serverless/otlp-normalizer
@@ -267,7 +267,7 @@ jobs:
   # untested image is never published.
   publish-images:
     name: Publish backend/frontend images to GHCR
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: [backend, frontend]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     permissions:
