@@ -32,4 +32,4 @@ _Last updated: 2026-10-08. Maintained during the Dependabot clean-up pass; updat
 
 - Ignored major versions are listed in `.github/dependabot.yml` with the reason for each.
 - Re-check exemptions before their `effectiveUntil` date (2026-11-15) and drop them once upstream fixes ship.
-- Dependabot/code-scanning alert API (2026-10-08): not readable. The proxy-injected `GH_ALERTS_TOKEN` is sent, but `GET /repos/arb-rajab/*/dependabot/alerts` and `/code-scanning/alerts` return 403 "Resource not accessible by integration" on all 12 repos; the token lacks the `vulnerability_alerts` / `security_events` read permissions. Alert state remains unverified.
+- Alerts read 2026-10-09 with the repo owner's PAT, run on their machine (Claude sessions still get 403: the proxy sends a GitHub App token instead of `GH_ALERTS_TOKEN`, even a PAT passed explicitly). No open Dependabot or code-scanning alerts.
