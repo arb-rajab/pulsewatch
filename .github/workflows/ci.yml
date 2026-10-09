@@ -193,6 +193,30 @@ jobs:
         with:
           category: "/language:${{ matrix.language }}"
 
+  # CodeQL for this repo's own GitHub Actions workflows (injection via
+  # untrusted event data, over-broad token permissions, unsafe checkouts).
+  # A separate job so the existing CodeQL job and its required check name
+  # stay unchanged; GitHub's required `CodeQL` check gates its alerts too.
+  codeql-actions:
+    name: CodeQL (actions)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: github/codeql-action/init@v4
+        with:
+          languages: actions
+          build-mode: none
+
+      - uses: github/codeql-action/analyze@v4
+        with:
+          category: "/language:actions"
+
   # ADR-0005 (Session 14): offline validation of the two new deployment-
   # layer additions. Neither step needs a live cluster or cloud
   # credentials — `terraform fmt` is pure HCL syntax/formatting, and
