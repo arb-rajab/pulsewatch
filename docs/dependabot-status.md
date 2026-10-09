@@ -14,6 +14,7 @@ _Last updated: 2026-10-09. Maintained during the Dependabot clean-up pass; updat
 - Open Dependabot PRs: 0 (each merged or closed only after reading its checks).
 - Default-branch CI: green at last check.
 - Last full rescan: 2026-10-09. Checked open PRs (none), default-branch and scheduled CI, Dependabot update jobs, ecosystem coverage (no new manifests since 2026-10-08), Actions pins, exemption expiry dates and stray branches, plus three new dimensions: branch-protection required contexts against the check runs a PR actually produces, the repo's `security_and_analysis` settings, and check-run annotations on `main`. No required context is stale. The annotations showed `ubuntu-latest` moving to Ubuntu 26 from 2026-10-19, so every job is now pinned to `ubuntu-24.04` (see Notes). The full-history gitleaks scan was not repeated: the only commits since 2026-10-08 are docs and CI changes, each scanned by the push-run gitleaks job.
+- Rescan cycle 3 (2026-10-09) repeated every dimension and added three: fork-PR workflow approval, whether `main` requires branches to be up to date before merging (`strict`), and the extra secret-scanning settings (non-provider patterns, validity checks). Live result: no open PRs; `security_and_analysis` shows secret scanning, push protection and Dependabot security updates enabled; private vulnerability reporting enabled; every required context is produced by the last merged PR's check runs and none is missing. The repo owner's token read 0 open Dependabot, code-scanning and secret-scanning alerts the same day (the first secret-scanning read; that permission was added to the token on 2026-10-09).
 
 ## Time-limited exemptions
 
@@ -29,6 +30,8 @@ _Last updated: 2026-10-09. Maintained during the Dependabot clean-up pass; updat
 - Merge policy (deliberate choice by the repo owner, 2026-10-08): every PR, major-version dependency bumps included, is merged as soon as all of its required checks are green, confirmed per PR. This repo is a code showcase with no business or sensitive dependency, so green checks are the only gate. Red, pending or conflicted PRs are fixed or closed instead.
 - Every Linux job runs on `ubuntu-24.04` (pinned 2026-10-09; it is what `ubuntu-latest` resolved to). GitHub moves `ubuntu-latest` to Ubuntu 26 from 2026-10-19, and an unattended image change could turn every check red at once. Move to `ubuntu-26.04` deliberately, in one PR whose CI has run on it. Dependabot does not bump `runs-on` labels.
 - `Dependency vulnerability scan (osv-scanner)` is a required check since 2026-10-09. It ran on every PR but was not required (found in that day's rescan), so under the merge policy a red scan would not have blocked a merge. Added by the repo owner through the API; the required-contexts list read before and after differs only by this entry.
+- Fork-PR workflow approval is `all_external_contributors` (set by the repo owner through the API on 2026-10-09, PUT 204, read back with the owner's token because the session's proxy blocks Actions paths).
+- Secret scanning for non-provider patterns and validity checks stay off: the owner's PATCH on 2026-10-09 returned 200, but the read-back still shows both `disabled`, so GitHub does not offer them on this user-owned public repo. Not retried.
 
 ## Deferred (not re-raised each pass)
 
