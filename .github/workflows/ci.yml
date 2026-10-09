@@ -18,9 +18,15 @@ jobs:
     defaults:
       run:
         working-directory: backend
+    # Service images come from mirror.gcr.io (Google's cache of popular Docker
+    # Hub images: no pull-rate limit, no Docker Hub auth outage). Service
+    # containers start before any step, so they cannot use the daemon-level
+    # mirror (with Docker Hub fallback) that other jobs set up. The cache only
+    # holds frequently pulled tags: if a new tag 404s there, use the plain
+    # Docker Hub name for that service.
     services:
       postgres:
-        image: postgres:16-alpine
+        image: mirror.gcr.io/library/postgres:16-alpine
         env:
           POSTGRES_USER: pulsewatch
           POSTGRES_PASSWORD: pulsewatch
@@ -131,6 +137,25 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
+      - name: Pull Docker Hub images through mirror.gcr.io
+        # Docker Hub rate-limits anonymous pulls and has outages. As a daemon
+        # registry mirror, mirror.gcr.io (Google's cache of popular Docker
+        # Hub images) is tried first and Docker Hub is the fallback on a
+        # cache miss. registry-mirrors is reloadable, so SIGHUP applies it
+        # without stopping service containers.
+        run: |
+          sudo sh -c '[ -s /etc/docker/daemon.json ] || echo "{}" > /etc/docker/daemon.json'
+          sudo cat /etc/docker/daemon.json \
+            | jq '. + {"registry-mirrors": ["https://mirror.gcr.io"]}' > "$RUNNER_TEMP/daemon.json"
+          sudo cp "$RUNNER_TEMP/daemon.json" /etc/docker/daemon.json
+          sudo systemctl reload docker
+          for _ in $(seq 1 15); do
+            docker info --format '{{.RegistryConfig.Mirrors}}' | grep -q mirror.gcr.io && exit 0
+            sleep 1
+          done
+          echo "::error::Docker did not pick up the registry mirror"
+          exit 1
+
       - uses: actions/checkout@v7
 
       - name: Validate otel-collector-config.yaml
@@ -307,6 +332,25 @@ jobs:
       contents: read
       packages: write
     steps:
+      - name: Pull Docker Hub images through mirror.gcr.io
+        # Docker Hub rate-limits anonymous pulls and has outages. As a daemon
+        # registry mirror, mirror.gcr.io (Google's cache of popular Docker
+        # Hub images) is tried first and Docker Hub is the fallback on a
+        # cache miss. registry-mirrors is reloadable, so SIGHUP applies it
+        # without stopping service containers.
+        run: |
+          sudo sh -c '[ -s /etc/docker/daemon.json ] || echo "{}" > /etc/docker/daemon.json'
+          sudo cat /etc/docker/daemon.json \
+            | jq '. + {"registry-mirrors": ["https://mirror.gcr.io"]}' > "$RUNNER_TEMP/daemon.json"
+          sudo cp "$RUNNER_TEMP/daemon.json" /etc/docker/daemon.json
+          sudo systemctl reload docker
+          for _ in $(seq 1 15); do
+            docker info --format '{{.RegistryConfig.Mirrors}}' | grep -q mirror.gcr.io && exit 0
+            sleep 1
+          done
+          echo "::error::Docker did not pick up the registry mirror"
+          exit 1
+
       - uses: actions/checkout@v7
 
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
