@@ -41,7 +41,7 @@ services:
     restart: "no"
 
   otel-collector:
-    image: otel/opentelemetry-collector-contrib:0.163.1-386
+    image: otel/opentelemetry-collector-contrib:0.164.0
     restart: unless-stopped
     volumes:
       - ./otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml:ro
